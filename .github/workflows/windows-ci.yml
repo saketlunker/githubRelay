@@ -1,0 +1,70 @@
+name: Windows CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - 22.13.0
+          - 24.x
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Restore exact dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify backend pin
+        shell: pwsh
+        run: |
+          $lock = Get-Content package-lock.json -Raw | ConvertFrom-Json -AsHashtable
+          $entry = $lock.packages['node_modules/@jeffreycao/copilot-api']
+          if ($entry.version -ne '2.0.1') { throw "Unexpected backend version: $($entry.version)" }
+          $expected = 'sha512-yY0nuj65kY5OlFT+wlss0VI+rYu3NFD1sXyj6uEGdQiH2a0mqYWd2MGrC0f3JPRUG4yRVpcvtcix5TjABv5AgA=='
+          if ($entry.integrity -ne $expected) { throw 'Unexpected backend integrity.' }
+          $package = Get-Content node_modules/@jeffreycao/copilot-api/package.json -Raw | ConvertFrom-Json
+          if ($package.version -ne $entry.version) { throw 'Installed backend does not match the lock.' }
+
+      - name: Run Node tests
+        run: npm test
+
+      - name: Run PowerShell 7 tests
+        if: matrix.node == '22.13.0'
+        shell: pwsh
+        run: ./tests/powershell/run-tests.ps1
+
+      - name: Run Windows PowerShell 5.1 tests
+        if: matrix.node == '22.13.0'
+        shell: powershell
+        run: ./tests/powershell/run-tests.ps1
+
+      - name: Run offline installer integration
+        if: matrix.node == '22.13.0'
+        shell: pwsh
+        run: ./tests/powershell/install-integration.ps1
+
+      - name: Verify installer dry run is offline
+        if: matrix.node == '22.13.0'
+        shell: pwsh
+        run: |
+          $target = Join-Path $PWD '.test-output\ci-dry-run'
+          $result = ./install.ps1 -InstallRoot $target -DryRun -SkipTask -SkipAcl
+          if ($result.WritesPerformed) { throw 'Dry-run reported a write.' }
+          if (Test-Path -LiteralPath $target) { throw 'Dry-run wrote to disk.' }
