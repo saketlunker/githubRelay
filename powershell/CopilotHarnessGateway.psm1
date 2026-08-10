@@ -971,6 +971,82 @@ function Set-CHGDesiredState {
     })
 }
 
+function Invoke-CHGLoopbackRequest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [hashtable]$Headers = @{},
+        [int]$TimeoutSeconds = 5
+    )
+
+    $timeoutMilliseconds = [int]([long]$TimeoutSeconds * [long]1000)
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $request = [Net.WebRequest]::Create($Uri)
+    $request.Method = 'GET'
+    $request.Timeout = $timeoutMilliseconds
+    $request.ReadWriteTimeout = $timeoutMilliseconds
+    $request.Proxy = $null
+    foreach ($name in $Headers.Keys) {
+        $request.Headers[[string]$name] = [string]$Headers[$name]
+    }
+
+    $response = $null
+    try {
+        $response = $request.GetResponse()
+    }
+    catch [Net.WebException] {
+        # A 4xx/5xx status is a meaningful gateway state, not a transport failure.
+        if ($null -eq $_.Exception.Response) {
+            throw
+        }
+        $response = $_.Exception.Response
+    }
+
+    try {
+        $statusCode = [int]$response.StatusCode
+        $reader = New-Object IO.StreamReader($response.GetResponseStream())
+        try {
+            $remainingMilliseconds = [long]$timeoutMilliseconds - $stopwatch.ElapsedMilliseconds
+            if ($remainingMilliseconds -le 0) {
+                $request.Abort()
+                throw [TimeoutException]::new(
+                    "Loopback request timed out after $TimeoutSeconds seconds."
+                )
+            }
+
+            $readTask = $reader.ReadToEndAsync()
+            if (-not ([IAsyncResult]$readTask).AsyncWaitHandle.WaitOne(
+                [int]$remainingMilliseconds
+            )) {
+                $request.Abort()
+                throw [TimeoutException]::new(
+                    "Loopback request timed out after $TimeoutSeconds seconds."
+                )
+            }
+            $text = $readTask.GetAwaiter().GetResult()
+        }
+        finally {
+            $reader.Dispose()
+        }
+    }
+    finally {
+        $response.Dispose()
+    }
+
+    $body = $null
+    if (-not [string]::IsNullOrWhiteSpace($text)) {
+        try {
+            $body = $text | ConvertFrom-Json
+        }
+        catch {
+            $body = $text
+        }
+    }
+    return [ordered]@{
+        StatusCode = $statusCode
+        Body = $body
+    }
+}
+
 function Invoke-CHGHealthRequest {
     param(
         [Parameter(Mandatory = $true)]$Context,
@@ -980,10 +1056,23 @@ function Invoke-CHGHealthRequest {
 
     $base = "http://127.0.0.1:$($Context.Configuration.listen.port)"
     if ($Deep) {
-        $headers = @{ 'x-api-key' = [string]$Context.Secrets.clientApiKey }
-        return Invoke-RestMethod -Uri "$base/v1/models" -Headers $headers -Method Get -TimeoutSec $TimeoutSeconds
+        $result = Invoke-CHGLoopbackRequest `
+            -Uri "$base/v1/models" `
+            -Headers @{ 'x-api-key' = [string]$Context.Secrets.clientApiKey } `
+            -TimeoutSeconds $TimeoutSeconds
+        if ($result.StatusCode -ne 200) {
+            throw "Authenticated model probe returned HTTP $($result.StatusCode)."
+        }
+        return $result.Body
     }
-    return Invoke-RestMethod -Uri "$base/_gateway/health" -Method Get -TimeoutSec $TimeoutSeconds
+
+    $result = Invoke-CHGLoopbackRequest `
+        -Uri "$base/_gateway/health" `
+        -TimeoutSeconds $TimeoutSeconds
+    if ($null -eq $result.Body -or $null -eq $result.Body.status) {
+        throw "Health endpoint returned HTTP $($result.StatusCode) without a status."
+    }
+    return $result.Body
 }
 
 function Wait-CHGHealth {
@@ -1181,6 +1270,213 @@ function Restart-CHGGateway {
     return Start-CHGGateway -InstallRoot $InstallRoot -TimeoutSeconds $TimeoutSeconds
 }
 
+function ConvertTo-CHGWindowsCommandLineArgument {
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [object]$Argument
+    )
+
+    if ($null -eq $Argument) {
+        throw 'A process argument cannot be null.'
+    }
+    if ($Argument -isnot [string]) {
+        throw 'A process argument must be a string.'
+    }
+    if ($Argument.IndexOf([char]0) -ge 0) {
+        throw 'A Windows process argument cannot contain NUL.'
+    }
+
+    $builder = New-Object Text.StringBuilder
+    [void]$builder.Append([char]0x22)
+    $backslashes = 0
+    foreach ($character in $Argument.ToCharArray()) {
+        if ($character -eq [char]0x5c) {
+            $backslashes++
+            continue
+        }
+        if ($character -eq [char]0x22) {
+            # Quotes preceded by n backslashes require 2n+1 backslashes.
+            [void]$builder.Append([char]0x5c, (2 * $backslashes + 1))
+            [void]$builder.Append([char]0x22)
+        }
+        else {
+            if ($backslashes -gt 0) {
+                [void]$builder.Append([char]0x5c, $backslashes)
+            }
+            [void]$builder.Append($character)
+        }
+        $backslashes = 0
+    }
+
+    # Backslashes before the closing quote must be doubled.
+    if ($backslashes -gt 0) {
+        [void]$builder.Append([char]0x5c, (2 * $backslashes))
+    }
+    [void]$builder.Append([char]0x22)
+    return $builder.ToString()
+}
+
+function Set-CHGProcessArguments {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Diagnostics.ProcessStartInfo]$StartInfo,
+        [Parameter(Mandatory = $true)]
+        [object[]]$ArgumentList
+    )
+
+    foreach ($argument in $ArgumentList) {
+        if ($null -eq $argument -or $argument -isnot [string]) {
+            throw 'Every process argument must be a non-null string.'
+        }
+        if ($argument.IndexOf([char]0) -ge 0) {
+            throw 'A Windows process argument cannot contain NUL.'
+        }
+    }
+
+    if ($null -ne $StartInfo.PSObject.Properties['ArgumentList']) {
+        foreach ($argument in $ArgumentList) {
+            [void]$StartInfo.ArgumentList.Add([string]$argument)
+        }
+        return
+    }
+
+    $StartInfo.Arguments = @(
+        foreach ($argument in $ArgumentList) {
+            ConvertTo-CHGWindowsCommandLineArgument $argument
+        }
+    ) -join ' '
+}
+
+function Invoke-CHGForegroundProcess {
+    [OutputType([void])]
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][object[]]$ArgumentList,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][hashtable]$EnvironmentVariables,
+        [Parameter(Mandatory = $true)]
+        [ValidateRange(1, 3600)][int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)][string]$Operation
+    )
+
+    $startInfo = New-Object Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FilePath
+    $startInfo.WorkingDirectory = $WorkingDirectory
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $false
+    $startInfo.ErrorDialog = $false
+    $startInfo.RedirectStandardInput = $false
+    $startInfo.RedirectStandardOutput = $false
+    $startInfo.RedirectStandardError = $false
+    Set-CHGProcessArguments -StartInfo $startInfo -ArgumentList $ArgumentList
+
+    foreach ($name in $EnvironmentVariables.Keys) {
+        $startInfo.EnvironmentVariables[[string]$name] = [string]$EnvironmentVariables[$name]
+    }
+
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $started = $false
+    $primaryError = $null
+    $cleanupFailures = @()
+    try {
+        try {
+            $started = $process.Start()
+            if (-not $started) {
+                throw "$Operation process could not be started."
+            }
+
+            $timeoutMilliseconds = [int]([long]$TimeoutSeconds * [long]1000)
+            if (-not $process.WaitForExit($timeoutMilliseconds)) {
+                throw [TimeoutException]::new(
+                    "$Operation timed out after $TimeoutSeconds seconds."
+                )
+            }
+
+            [void]$process.WaitForExit()
+            $exitCode = $process.ExitCode
+            if ($exitCode -ne 0) {
+                throw [InvalidOperationException]::new(
+                    "$Operation failed with exit code $exitCode."
+                )
+            }
+        }
+        catch {
+            $primaryError = $_
+        }
+    }
+    finally {
+        $associated = $started
+        if (-not $associated) {
+            try {
+                $unused = $process.Id
+                $associated = $true
+            }
+            catch {
+                $associated = $false
+            }
+        }
+
+        if ($associated) {
+            $hasExited = $false
+            try {
+                $hasExited = $process.HasExited
+            }
+            catch {
+                $cleanupFailures += $_.Exception.Message
+            }
+
+            if (-not $hasExited) {
+                try {
+                    $process.Kill()
+                }
+                catch [InvalidOperationException] {
+                    # The child exited between HasExited and Kill.
+                }
+                catch {
+                    $cleanupFailures += $_.Exception.Message
+                }
+            }
+
+            try {
+                if ($process.WaitForExit(5000)) {
+                    [void]$process.WaitForExit()
+                }
+                else {
+                    $cleanupFailures += "$Operation child did not exit within 5 seconds of termination."
+                }
+            }
+            catch {
+                $cleanupFailures += $_.Exception.Message
+            }
+        }
+
+        try {
+            $process.Dispose()
+        }
+        catch {
+            $cleanupFailures += $_.Exception.Message
+        }
+    }
+
+    if ($cleanupFailures.Count -gt 0) {
+        $cleanupText = $cleanupFailures -join ' | '
+        if ($null -ne $primaryError) {
+            throw [InvalidOperationException]::new(
+                "$($primaryError.Exception.Message) Child-process cleanup also failed: $cleanupText",
+                $primaryError.Exception
+            )
+        }
+        throw "$Operation child-process cleanup failed: $cleanupText"
+    }
+    if ($null -ne $primaryError) {
+        throw $primaryError
+    }
+}
+
 function Invoke-CHGAuthenticate {
     [CmdletBinding()]
     param(
@@ -1196,40 +1492,31 @@ function Invoke-CHGAuthenticate {
     }
     $null = Stop-CHGGateway -InstallRoot $InstallRoot
 
-    $previousHome = $env:COPILOT_API_HOME
-    $previousHost = $env:HOST
-    $previousSystemCa = $env:NODE_USE_SYSTEM_CA
     $authenticationFailure = $null
     try {
-        try {
-            $env:COPILOT_API_HOME = $context.Paths.BackendHome
-            $env:HOST = '127.0.0.1'
-            $env:NODE_USE_SYSTEM_CA = '1'
-            $arguments = @(
-                "`"$($context.Entrypoint)`"",
+        Write-Host ''
+        Write-Host 'Starting GitHub device sign-in.' -ForegroundColor Cyan
+        Write-Host 'A verification URL and one-time code appear below. Approve it in a browser.' -ForegroundColor Cyan
+        Write-Host ''
+
+        Invoke-CHGForegroundProcess `
+            -FilePath ([string]$context.Install.nodePath) `
+            -ArgumentList @(
+                [string]$context.Entrypoint,
                 'auth',
                 'login',
                 '--provider',
                 'copilot'
-            )
-            $process = Start-Process `
-                -FilePath $context.Install.nodePath `
-                -ArgumentList $arguments `
-                -NoNewWindow `
-                -PassThru
-            if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-                Stop-Process -Id $process.Id -Force
-                throw "Authentication timed out after $TimeoutSeconds seconds."
-            }
-            if ($process.ExitCode -ne 0) {
-                throw "Authentication failed with exit code $($process.ExitCode)."
-            }
-        }
-        finally {
-            $env:COPILOT_API_HOME = $previousHome
-            $env:HOST = $previousHost
-            $env:NODE_USE_SYSTEM_CA = $previousSystemCa
-        }
+            ) `
+            -WorkingDirectory ([string]$context.ReleasePath) `
+            -EnvironmentVariables @{
+                COPILOT_API_HOME = [string]$context.Paths.BackendHome
+                HOST = '127.0.0.1'
+                NODE_USE_SYSTEM_CA = '1'
+            } `
+            -TimeoutSeconds $TimeoutSeconds `
+            -Operation 'Authentication'
+
         $tokenPath = Join-Path $context.Paths.BackendHome 'github_token'
         if (-not (Test-Path -LiteralPath $tokenPath) -or [string]::IsNullOrWhiteSpace((Get-Content -LiteralPath $tokenPath -Raw))) {
             throw 'Authentication completed without a persisted GitHub token.'

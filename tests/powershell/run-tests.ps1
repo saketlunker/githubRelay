@@ -51,6 +51,83 @@ function Assert-Equal {
     }
 }
 
+function Invoke-WithLoopbackServer {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$Server,
+        [Parameter(Mandatory = $true)][scriptblock]$Client
+    )
+
+    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+    $runspace = $null
+    $serverPowerShell = $null
+    $serverInvocation = $null
+    $endInvokeCalled = $false
+    try {
+        $listener.Start()
+        $port = ([Net.IPEndPoint]$listener.LocalEndpoint).Port
+        $runspace = [Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+        $runspace.Open()
+        $serverPowerShell = [Management.Automation.PowerShell]::Create()
+        $serverPowerShell.Runspace = $runspace
+        [void]$serverPowerShell.AddScript($Server.ToString()).AddArgument($listener)
+        $serverInvocation = $serverPowerShell.BeginInvoke()
+
+        $result = & $Client $port
+        if (-not $serverInvocation.AsyncWaitHandle.WaitOne(7000)) {
+            throw 'Timed out waiting for the loopback test server to finish.'
+        }
+        try {
+            [void]$serverPowerShell.EndInvoke($serverInvocation)
+        }
+        finally {
+            $endInvokeCalled = $true
+        }
+        if ($serverPowerShell.Streams.Error.Count -gt 0) {
+            throw ($serverPowerShell.Streams.Error -join ' | ')
+        }
+        return $result
+    }
+    finally {
+        $listener.Stop()
+        if ($null -ne $serverInvocation -and -not $endInvokeCalled) {
+            if (-not $serverInvocation.IsCompleted) {
+                $stop = $serverPowerShell.BeginStop($null, $null)
+                try {
+                    if (-not $stop.AsyncWaitHandle.WaitOne(7000)) {
+                        throw 'Timed out stopping the loopback test server.'
+                    }
+                    $serverPowerShell.EndStop($stop)
+                }
+                finally {
+                    $stop.AsyncWaitHandle.Close()
+                }
+            }
+
+            if ($serverInvocation.AsyncWaitHandle.WaitOne(7000)) {
+                try {
+                    [void]$serverPowerShell.EndInvoke($serverInvocation)
+                }
+                catch [Management.Automation.PipelineStoppedException] {
+                }
+                finally {
+                    $endInvokeCalled = $true
+                }
+            }
+        }
+
+        if ($null -ne $serverInvocation) {
+            $serverInvocation.AsyncWaitHandle.Close()
+        }
+        if ($null -ne $serverPowerShell) {
+            $serverPowerShell.Dispose()
+        }
+        if ($null -ne $runspace) {
+            $runspace.Close()
+            $runspace.Dispose()
+        }
+    }
+}
+
 $testOutput = Join-Path $repositoryRoot '.test-output'
 if (-not (Test-Path -LiteralPath $testOutput)) {
     $null = New-Item -ItemType Directory -Path $testOutput
@@ -151,6 +228,467 @@ try {
                 [Security.AccessControl.FileSystemRights]::FullControl
             ) 'Install-root ACL did not grant full control to an allowed identity.'
         }
+    }
+
+    Invoke-Test 'health probes report blocked states instead of unreachable' {
+        $health = Invoke-WithLoopbackServer -Server {
+            param([Net.Sockets.TcpListener]$Listener)
+
+            $ErrorActionPreference = 'Stop'
+            $client = $null
+            $stream = $null
+            try {
+                $accept = $Listener.AcceptTcpClientAsync()
+                if (-not ([IAsyncResult]$accept).AsyncWaitHandle.WaitOne(5000)) {
+                    throw 'Timed out waiting for the health connection.'
+                }
+                $client = $accept.GetAwaiter().GetResult()
+                $stream = $client.GetStream()
+                $stream.ReadTimeout = 5000
+                $stream.WriteTimeout = 5000
+                $buffer = New-Object byte[] 4096
+                if ($stream.Read($buffer, 0, $buffer.Length) -le 0) {
+                    throw 'Health client closed before sending a request.'
+                }
+
+                $body = '{"status":"blocked-auth","backendReady":false}'
+                $response = "HTTP/1.1 503 Service Unavailable`r`n"
+                $response += "Content-Type: application/json`r`n"
+                $response += "Content-Length: $([Text.Encoding]::UTF8.GetByteCount($body))`r`n"
+                $response += "Connection: close`r`n`r`n$body"
+                $bytes = [Text.Encoding]::UTF8.GetBytes($response)
+                $stream.Write($bytes, 0, $bytes.Length)
+                $stream.Flush()
+            }
+            finally {
+                if ($null -ne $stream) {
+                    $stream.Dispose()
+                }
+                if ($null -ne $client) {
+                    $client.Dispose()
+                }
+            }
+        } -Client {
+            param([int]$Port)
+
+            $probeContext = [ordered]@{
+                Configuration = [PSCustomObject]@{
+                    listen = [PSCustomObject]@{ address = '127.0.0.1'; port = $Port }
+                }
+                Secrets = [PSCustomObject]@{ clientApiKey = 'unused-test-key' }
+            }
+            return & $gatewayModule {
+                param($TargetContext)
+                Invoke-CHGHealthRequest -Context $TargetContext -TimeoutSeconds 5
+            } $probeContext
+        }
+        Assert-Equal 'blocked-auth' ([string]$health.status) 'Health probe did not surface the blocked state.'
+    }
+
+    Invoke-Test 'health probes enforce one response deadline' {
+        $outcome = Invoke-WithLoopbackServer -Server {
+            param([Net.Sockets.TcpListener]$Listener)
+
+            $ErrorActionPreference = 'Stop'
+            $client = $null
+            $stream = $null
+            try {
+                $accept = $Listener.AcceptTcpClientAsync()
+                if (-not ([IAsyncResult]$accept).AsyncWaitHandle.WaitOne(5000)) {
+                    throw 'Timed out waiting for the health connection.'
+                }
+                $client = $accept.GetAwaiter().GetResult()
+                $stream = $client.GetStream()
+                $stream.ReadTimeout = 5000
+                $stream.WriteTimeout = 5000
+                $buffer = New-Object byte[] 4096
+                if ($stream.Read($buffer, 0, $buffer.Length) -le 0) {
+                    throw 'Health client closed before sending a request.'
+                }
+
+                $bodyBytes = [Text.Encoding]::UTF8.GetBytes('{"status":"x"}')
+                $headers = "HTTP/1.1 200 OK`r`n"
+                $headers += "Content-Type: application/json`r`n"
+                $headers += "Content-Length: $($bodyBytes.Length)`r`n"
+                $headers += "Connection: close`r`n`r`n"
+                $headerBytes = [Text.Encoding]::ASCII.GetBytes($headers)
+                $stream.Write($headerBytes, 0, $headerBytes.Length)
+                $stream.Flush()
+                for ($index = 0; $index -lt $bodyBytes.Length; $index++) {
+                    try {
+                        $stream.Write($bodyBytes, $index, 1)
+                        $stream.Flush()
+                    }
+                    catch [IO.IOException] {
+                        break
+                    }
+                    catch [ObjectDisposedException] {
+                        break
+                    }
+                    Start-Sleep -Milliseconds 150
+                }
+            }
+            finally {
+                if ($null -ne $stream) {
+                    $stream.Dispose()
+                }
+                if ($null -ne $client) {
+                    $client.Dispose()
+                }
+            }
+        } -Client {
+            param([int]$Port)
+
+            $probeContext = [ordered]@{
+                Configuration = [PSCustomObject]@{
+                    listen = [PSCustomObject]@{ address = '127.0.0.1'; port = $Port }
+                }
+                Secrets = [PSCustomObject]@{ clientApiKey = 'unused-test-key' }
+            }
+            $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+            $message = $null
+            try {
+                & $gatewayModule {
+                    param($TargetContext)
+                    Invoke-CHGHealthRequest -Context $TargetContext -TimeoutSeconds 1
+                } $probeContext
+            }
+            catch {
+                $message = $_.Exception.Message
+            }
+            finally {
+                $stopwatch.Stop()
+            }
+            return [PSCustomObject]@{
+                Message = $message
+                ElapsedSeconds = $stopwatch.Elapsed.TotalSeconds
+            }
+        }
+
+        Assert-Equal `
+            'Loopback request timed out after 1 seconds.' `
+            $outcome.Message `
+            'Trickling health response did not time out.'
+        Assert-True ($outcome.ElapsedSeconds -lt 3) 'Health response deadline was not bounded.'
+    }
+
+    Invoke-Test 'foreground process preserves inherited output and exact arguments' {
+        $unicodeSuffix = [char]0x00E9
+        $fixtureRoot = Join-Path $testRoot "foreground process $unicodeSuffix"
+        $null = New-Item -ItemType Directory -Path $fixtureRoot -Force
+        $childScript = Join-Path $fixtureRoot 'write arguments.mjs'
+        $childResultPath = Join-Path $fixtureRoot 'child-result.json'
+        $expectedPath = Join-Path $fixtureRoot 'expected.json'
+        $driverScript = Join-Path $fixtureRoot 'capture driver.ps1'
+        $driverResultPath = Join-Path $fixtureRoot 'driver-result.json'
+        $source = @'
+import { writeFileSync } from "node:fs";
+
+const [outputPath, ...values] = process.argv.slice(2);
+writeFileSync(
+  outputPath,
+  JSON.stringify({
+    values,
+    environment: process.env.CHG_TEST_CHILD_ENV,
+  }),
+  "utf8",
+);
+console.log("CHG_TEST_STDOUT_VISIBLE");
+console.error("CHG_TEST_STDERR_VISIBLE");
+'@
+        [IO.File]::WriteAllText(
+            $childScript,
+            $source,
+            [Text.UTF8Encoding]::new($false)
+        )
+
+        $expected = @(
+            '',
+            'value with spaces',
+            'quote"value',
+            'trailing\',
+            'slashes\\"quote',
+            "caf$unicodeSuffix"
+        )
+        $nodePath = [string](Get-Command node -ErrorAction Stop).Source
+        [IO.File]::WriteAllText(
+            $expectedPath,
+            (ConvertTo-Json -InputObject $expected -Compress),
+            [Text.UTF8Encoding]::new($false)
+        )
+
+        $driverSource = @'
+[CmdletBinding()]
+param(
+    [string]$ModulePath,
+    [string]$NodePath,
+    [string]$ChildScript,
+    [string]$ChildResultPath,
+    [string]$ExpectedPath,
+    [string]$WorkingDirectory,
+    [string]$DriverResultPath
+)
+
+$ErrorActionPreference = 'Stop'
+Import-Module $ModulePath -Force
+$module = Get-Module CopilotHarnessGateway
+$decodedArguments = (
+    [IO.File]::ReadAllText($ExpectedPath, [Text.Encoding]::UTF8) |
+        ConvertFrom-Json
+)
+$arguments = New-Object Collections.Generic.List[string]
+foreach ($argument in $decodedArguments) {
+    [void]$arguments.Add([string]$argument)
+}
+$pipelineOutput = @(
+    & $module {
+        param($Executable, $Arguments, $Directory)
+        Invoke-CHGForegroundProcess `
+            -FilePath $Executable `
+            -ArgumentList $Arguments `
+            -WorkingDirectory $Directory `
+            -EnvironmentVariables @{ CHG_TEST_CHILD_ENV = 'child-value' } `
+            -TimeoutSeconds 10 `
+            -Operation 'Process helper test'
+    } $NodePath (@($ChildScript, $ChildResultPath) + $arguments.ToArray()) $WorkingDirectory
+)
+$result = [ordered]@{
+    pipelineCount = $pipelineOutput.Count
+    parentEnvironment = $env:CHG_TEST_CHILD_ENV
+}
+[IO.File]::WriteAllText(
+    $DriverResultPath,
+    (ConvertTo-Json -InputObject $result -Compress),
+    [Text.UTF8Encoding]::new($false)
+)
+'@
+        [IO.File]::WriteAllText(
+            $driverScript,
+            $driverSource,
+            [Text.UTF8Encoding]::new($false)
+        )
+
+        $startInfo = New-Object Diagnostics.ProcessStartInfo
+        $startInfo.FileName = [string](Get-Process -Id $PID).Path
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $driverArguments = @(
+            '-NoLogo',
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            $driverScript,
+            $modulePath,
+            $nodePath,
+            $childScript,
+            $childResultPath,
+            $expectedPath,
+            $fixtureRoot,
+            $driverResultPath
+        )
+        & $gatewayModule {
+            param($DriverStartInfo, $Arguments)
+            Set-CHGProcessArguments -StartInfo $DriverStartInfo -ArgumentList $Arguments
+        } $startInfo $driverArguments
+        $startInfo.EnvironmentVariables['CHG_TEST_CHILD_ENV'] = 'parent-value'
+
+        $driver = New-Object Diagnostics.Process
+        $driver.StartInfo = $startInfo
+        $started = $false
+        try {
+            $started = $driver.Start()
+            Assert-True $started 'Output-capture driver did not start.'
+            $stdoutTask = $driver.StandardOutput.ReadToEndAsync()
+            $stderrTask = $driver.StandardError.ReadToEndAsync()
+            if (-not $driver.WaitForExit(20000)) {
+                $driver.Kill()
+                $driver.WaitForExit()
+                throw 'Output-capture driver timed out.'
+            }
+            $stdout = $stdoutTask.GetAwaiter().GetResult()
+            $stderr = $stderrTask.GetAwaiter().GetResult()
+            Assert-Equal 0 $driver.ExitCode "Output-capture driver failed: $stderr"
+        }
+        finally {
+            if ($started -and -not $driver.HasExited) {
+                $driver.Kill()
+                $driver.WaitForExit()
+            }
+            $driver.Dispose()
+        }
+
+        Assert-True ($stdout -like '*CHG_TEST_STDOUT_VISIBLE*') 'Child stdout was not inherited.'
+        Assert-True ($stderr -like '*CHG_TEST_STDERR_VISIBLE*') 'Child stderr was not inherited.'
+        $driverResult = [IO.File]::ReadAllText(
+            $driverResultPath,
+            [Text.Encoding]::UTF8
+        ) | ConvertFrom-Json
+        Assert-Equal 0 $driverResult.pipelineCount 'Child output leaked into the PowerShell pipeline.'
+        Assert-Equal `
+            'parent-value' `
+            $driverResult.parentEnvironment `
+            'Child environment override changed the parent process.'
+
+        $payload = [IO.File]::ReadAllText(
+                $childResultPath,
+                [Text.Encoding]::UTF8
+            ) | ConvertFrom-Json
+        Assert-Equal 'child-value' $payload.environment 'Child environment override was not applied.'
+        Assert-Equal $expected.Count @($payload.values).Count 'Child argument count changed.'
+        for ($index = 0; $index -lt $expected.Count; $index++) {
+            Assert-Equal $expected[$index] $payload.values[$index] "Child argument $index changed."
+        }
+    }
+
+    Invoke-Test 'foreground process failures are bounded and reap the owned child' {
+        $fixtureRoot = Join-Path $testRoot 'foreground timeout'
+        $null = New-Item -ItemType Directory -Path $fixtureRoot -Force
+        $timeoutScript = Join-Path $fixtureRoot 'timeout.mjs'
+        $pidPath = Join-Path $fixtureRoot 'child.pid'
+        $source = @'
+import { writeFileSync } from "node:fs";
+
+writeFileSync(process.argv[2], String(process.pid), "utf8");
+setTimeout(() => {}, 10000);
+'@
+        [IO.File]::WriteAllText(
+            $timeoutScript,
+            $source,
+            [Text.UTF8Encoding]::new($false)
+        )
+
+        $nodePath = [string](Get-Command node -ErrorAction Stop).Source
+        $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+        $timeoutMessage = $null
+        try {
+            & $gatewayModule {
+                param($Executable, $Arguments, $Directory)
+                Invoke-CHGForegroundProcess `
+                    -FilePath $Executable `
+                    -ArgumentList $Arguments `
+                    -WorkingDirectory $Directory `
+                    -EnvironmentVariables @{} `
+                    -TimeoutSeconds 1 `
+                    -Operation 'Timeout test'
+            } $nodePath @($timeoutScript, $pidPath) $fixtureRoot
+        }
+        catch {
+            $timeoutMessage = $_.Exception.Message
+        }
+        finally {
+            $stopwatch.Stop()
+        }
+
+        Assert-Equal 'Timeout test timed out after 1 seconds.' $timeoutMessage 'Unexpected timeout error.'
+        Assert-True ($stopwatch.Elapsed.TotalSeconds -lt 5) 'Timed-out child cleanup was not bounded.'
+        Assert-True (Test-Path -LiteralPath $pidPath -PathType Leaf) 'Timeout child did not record its PID.'
+        $childPid = [int]([IO.File]::ReadAllText($pidPath))
+        Assert-True `
+            ($null -eq (Get-Process -Id $childPid -ErrorAction SilentlyContinue)) `
+            'Timed-out child process was not reaped.'
+
+        $failureScript = Join-Path $fixtureRoot 'failure.mjs'
+        [IO.File]::WriteAllText(
+            $failureScript,
+            'process.exit(7);',
+            [Text.UTF8Encoding]::new($false)
+        )
+        $failureMessage = $null
+        try {
+            & $gatewayModule {
+                param($Executable, $Arguments, $Directory)
+                Invoke-CHGForegroundProcess `
+                    -FilePath $Executable `
+                    -ArgumentList $Arguments `
+                    -WorkingDirectory $Directory `
+                    -EnvironmentVariables @{} `
+                    -TimeoutSeconds 10 `
+                    -Operation 'Failure test'
+            } $nodePath @($failureScript) $fixtureRoot
+        }
+        catch {
+            $failureMessage = $_.Exception.Message
+        }
+        Assert-Equal 'Failure test failed with exit code 7.' $failureMessage 'Unexpected exit-code error.'
+    }
+
+    Invoke-Test 'authentication failure restores the prior running state' {
+        $authenticationRoot = Join-Path $testRoot 'authentication restoration'
+        $backendHome = Join-Path $authenticationRoot 'backend'
+        $desiredState = Join-Path $authenticationRoot 'desired-state.json'
+        $null = New-Item -ItemType Directory -Path $backendHome -Force
+        Write-CHGAtomicJson $desiredState ([ordered]@{
+            schemaVersion = 1
+            state = 'running'
+        })
+        $fakeContext = [ordered]@{
+            Paths = [ordered]@{
+                DesiredState = $desiredState
+                BackendHome = $backendHome
+            }
+            Install = [PSCustomObject]@{ nodePath = 'unused-test-node' }
+            Entrypoint = 'unused-test-entrypoint'
+            ReleasePath = $authenticationRoot
+        }
+
+        $outcome = & $gatewayModule {
+            param($Context)
+
+            $calls = New-Object Collections.Generic.List[string]
+            function Get-CHGInstalledContext {
+                param([string]$InstallRoot)
+                [void]$calls.Add('context')
+                return $Context
+            }
+            function Stop-CHGGateway {
+                param([string]$InstallRoot)
+                [void]$calls.Add('stop')
+            }
+            function Invoke-CHGForegroundProcess {
+                param(
+                    $FilePath,
+                    $ArgumentList,
+                    $WorkingDirectory,
+                    $EnvironmentVariables,
+                    $TimeoutSeconds,
+                    $Operation
+                )
+                [void]$calls.Add('authenticate')
+                throw [TimeoutException]::new(
+                    "Authentication timed out after $TimeoutSeconds seconds."
+                )
+            }
+            function Start-CHGGateway {
+                param([string]$InstallRoot)
+                [void]$calls.Add('restore')
+                return [PSCustomObject]@{ Status = 'restored' }
+            }
+
+            $message = $null
+            try {
+                Invoke-CHGAuthenticate -InstallRoot 'unused-test-root' -TimeoutSeconds 60
+            }
+            catch {
+                $message = $_.Exception.Message
+            }
+            return [PSCustomObject]@{
+                Calls = $calls -join ','
+                Message = $message
+            }
+        } $fakeContext
+
+        Assert-Equal `
+            'context,stop,authenticate,restore' `
+            $outcome.Calls `
+            'Authentication failure did not restore state in order.'
+        Assert-Equal `
+            'Authentication timed out after 60 seconds.' `
+            $outcome.Message `
+            'Authentication timeout was not rethrown after restoration.'
     }
 
     Invoke-Test 'installer dry-run performs no writes' {
