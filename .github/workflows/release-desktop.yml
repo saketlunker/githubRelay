@@ -62,7 +62,7 @@ jobs:
           ${{ matrix.class }}
         env:
           MODEL_RELAY_SIGNING_CLIENT: ${{ vars.MODEL_RELAY_SIGNING_CLIENT }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: signed-${{ matrix.class }}
           path: apps/desktop/signed-packages
@@ -80,7 +80,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22.13.0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           pattern: signed-*
           merge-multiple: true
