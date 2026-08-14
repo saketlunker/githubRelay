@@ -1,0 +1,57 @@
+name: Desktop CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: ${{ matrix.os }} desktop
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - macos-latest
+          - ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - name: Restore exact dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Typecheck desktop
+        run: npm run typecheck:desktop
+      - name: Run Node tests
+        run: npm test
+      - name: Package current platform (unsigned smoke build)
+        run: npm run pack:desktop
+      - name: Upload package smoke output
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}-${{ runner.arch }}
+          path: apps/desktop/dist-packages
+          if-no-files-found: error
+
+  windows-headless:
+    name: Windows headless compatibility
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - shell: pwsh
+        run: ./tests/powershell/run-tests.ps1
+      - shell: powershell
+        run: ./tests/powershell/run-tests.ps1
+      - shell: pwsh
+        run: ./tests/powershell/install-integration.ps1

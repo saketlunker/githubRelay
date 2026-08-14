@@ -14,6 +14,7 @@ import test from 'node:test';
 import {
   ANTHROPIC_PROVIDER_ID,
   CLAUDE_API_KEY_HELPER,
+  claudeApiKeyHelper,
   CODEX_DEFAULTS_BEGIN,
   CODEX_PROVIDER_BEGIN,
   mergeClaudeSettings,
@@ -23,6 +24,18 @@ import {
   resolveClientPaths,
   runConfigureClients,
 } from '../../runtime/configure-clients.mjs';
+
+test('Claude API key helper is platform appropriate', () => {
+  assert.equal(claudeApiKeyHelper('win32'), CLAUDE_API_KEY_HELPER);
+  assert.equal(
+    claudeApiKeyHelper('darwin'),
+    '/bin/sh -c \'printf %s "$COPILOT_HARNESS_GATEWAY_API_KEY"\'',
+  );
+  assert.equal(
+    claudeApiKeyHelper('linux'),
+    '/bin/sh -c \'printf %s "$COPILOT_HARNESS_GATEWAY_API_KEY"\'',
+  );
+});
 
 const FIXED_TIME = new Date('2026-08-10T00:00:00.000Z');
 const TEST_OUTPUT = path.resolve(import.meta.dirname, '..', '..', '.test-output');

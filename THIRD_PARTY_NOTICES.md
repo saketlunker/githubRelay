@@ -26,3 +26,11 @@ This project installs `smol-toml` version 1.7.1 only to validate an existing
 Codex TOML document before applying lossless marker-delimited text edits.
 `smol-toml` is licensed under the BSD 3-Clause License; its notice is preserved
 in [`licenses/smol-toml-BSD-3-Clause.txt`](licenses/smol-toml-BSD-3-Clause.txt).
+
+## Desktop runtime
+
+The desktop application uses Electron 43, Electron Builder 26,
+`electron-updater` 6, Zod 4, `adm-zip` 0.6, esbuild 0.28, and their locked
+transitive dependencies. Their package licenses are included in the installed
+application and the generated SBOM. They do not change GitHub's terms for the
+Copilot service.

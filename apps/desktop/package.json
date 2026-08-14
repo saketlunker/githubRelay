@@ -1,0 +1,118 @@
+{
+  "name": "@github-model-relay/desktop",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Unofficial GitHub Model Relay tray application.",
+  "author": "Saket Lunker",
+  "main": "dist/main/index.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && npm run stage:gateway && node --test tests/*.test.mjs",
+    "start": "npm run build && electron .",
+    "stage:gateway": "node scripts/stage-gateway-release.mjs",
+    "pack": "npm run build && npm run stage:gateway && electron-builder --dir",
+    "dist": "npm run build && npm run stage:gateway && electron-builder"
+  },
+  "dependencies": {
+    "adm-zip": "0.6.0",
+    "electron-updater": "6.8.9",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "0.5.8",
+    "@types/node": "26.1.2",
+    "electron": "43.3.0",
+    "electron-builder": "26.15.7",
+    "esbuild": "0.28.1",
+    "typescript": "7.0.2"
+  },
+  "build": {
+    "appId": "io.github.saketlunker.githubmodelrelay",
+    "productName": "GitHub Model Relay",
+    "artifactName": "GitHub-Model-Relay-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "dist-packages"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".gateway-release.zip",
+        "to": "gateway-release.zip"
+      },
+      {
+        "from": "resources",
+        "to": "model-relay-resources"
+      }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "saketlunker",
+        "repo": "github-model-relay",
+        "releaseType": "release"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "linux": {
+      "category": "Development",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    }
+  }
+}

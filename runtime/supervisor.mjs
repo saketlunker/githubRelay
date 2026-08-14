@@ -65,6 +65,10 @@ function parseArguments(argv) {
       result.root = argv[++index];
       continue;
     }
+    if (argument === "--release-root") {
+      result.releaseRoot = argv[++index];
+      continue;
+    }
     throw new Error(`Unknown supervisor argument: ${argument}`);
   }
   if (!result.root) {
@@ -562,7 +566,10 @@ function sendJson(response, statusCode, value, headers = {}) {
 }
 
 async function main() {
-  const { root: rootArgument } = parseArguments(process.argv.slice(2));
+  const {
+    root: rootArgument,
+    releaseRoot: releaseRootArgument,
+  } = parseArguments(process.argv.slice(2));
   const root = path.resolve(rootArgument);
   const paths = {
     config: path.join(root, "config", "gateway.json"),
@@ -600,7 +607,19 @@ async function main() {
   if (!release) {
     throw new Error("Active immutable release is missing from install state");
   }
-  const releasePath = path.resolve(root, "versions", install.activeVersionId);
+  let releasePath = path.resolve(root, "versions", install.activeVersionId);
+  if (releaseRootArgument !== undefined) {
+    if (install.mode !== "desktop") {
+      throw new Error("--release-root is valid only for desktop installations");
+    }
+    releasePath = path.resolve(releaseRootArgument);
+    if (
+      typeof release.releaseRoot !== "string"
+      || path.resolve(release.releaseRoot) !== releasePath
+    ) {
+      throw new Error("Desktop release root does not match install state");
+    }
+  }
   const entrypoint = resolveInside(releasePath, release.entrypoint);
   if (!existsSync(entrypoint)) {
     throw new Error(`Backend entrypoint is missing: ${entrypoint}`);
@@ -946,9 +965,22 @@ async function main() {
             USERPROFILE: process.env.USERPROFILE,
             LOCALAPPDATA: process.env.LOCALAPPDATA,
             APPDATA: process.env.APPDATA,
+            HOME: process.env.HOME,
+            XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+            XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+            XDG_STATE_HOME: process.env.XDG_STATE_HOME,
+            XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
+            SHELL: process.env.SHELL,
+            LANG: process.env.LANG,
+            LC_ALL: process.env.LC_ALL,
+            SSL_CERT_FILE: process.env.SSL_CERT_FILE,
+            SSL_CERT_DIR: process.env.SSL_CERT_DIR,
             NODE_ENV: "production",
             NODE_NO_WARNINGS: "1",
             NODE_USE_SYSTEM_CA: "1",
+            ...(install.runtimeMode === "electron-node"
+              ? { ELECTRON_RUN_AS_NODE: "1" }
+              : {}),
             HOST: configuration.backend.address,
             COPILOT_API_HOME: paths.backendHome,
             COPILOT_API_LOG_DIR: paths.upstreamLogs,

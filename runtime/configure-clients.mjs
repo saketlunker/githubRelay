@@ -35,6 +35,12 @@ export const CODEX_PROVIDER_ID = 'copilot_harness_gateway';
 export const CLAUDE_API_KEY_HELPER =
   'powershell.exe -NoLogo -NoProfile -NonInteractive -Command "[Console]::Out.Write($env:COPILOT_HARNESS_GATEWAY_API_KEY)"';
 
+export function claudeApiKeyHelper(platform = process.platform) {
+  return platform === 'win32'
+    ? CLAUDE_API_KEY_HELPER
+    : '/bin/sh -c \'printf %s "$COPILOT_HARNESS_GATEWAY_API_KEY"\'';
+}
+
 export const CODEX_PROVIDER_BEGIN = '# >>> copilot-harness-gateway:provider >>>';
 export const CODEX_PROVIDER_END = '# <<< copilot-harness-gateway:provider <<<';
 export const CODEX_DEFAULTS_BEGIN = '# >>> copilot-harness-gateway:defaults >>>';
@@ -623,9 +629,11 @@ function claudeDesiredValues({
   opusModel = claudeModel,
   fastModel,
   setDefault = false,
+  platform = process.platform,
 }) {
+  const helper = claudeApiKeyHelper(platform);
   const desired = [
-    { path: ['apiKeyHelper'], value: CLAUDE_API_KEY_HELPER },
+    { path: ['apiKeyHelper'], value: helper },
     { path: ['env', 'ANTHROPIC_BASE_URL'], value: baseUrl },
     { path: ['env', 'ANTHROPIC_DEFAULT_SONNET_MODEL'], value: sonnetModel },
     { path: ['env', 'ANTHROPIC_DEFAULT_OPUS_MODEL'], value: opusModel },
@@ -643,9 +651,10 @@ export function mergeClaudeSettings(settings, options) {
   }
   const next = cloneJson(settings);
   const helper = getJsonPathState(next, ['apiKeyHelper']);
+  const desiredHelper = claudeApiKeyHelper(options.platform);
   if (
     helper.present
-    && helper.value !== CLAUDE_API_KEY_HELPER
+    && helper.value !== desiredHelper
     && options.force !== true
   ) {
     throw new Error('Claude Code already has a different apiKeyHelper; use --force to replace it.');
@@ -1487,12 +1496,13 @@ function planClaude({
       : {};
     const previousEntry = findOwnershipEntry(state, 'claude', paths.claude.settings);
     const existingHelper = getJsonPathState(source, ['apiKeyHelper']);
+    const desiredHelper = claudeApiKeyHelper(options.platform);
     const previousHelper = previousEntry?.ownedPaths?.find(
       (owned) => jsonPathKey(owned.path) === jsonPathKey(['apiKeyHelper']),
     );
     if (
       existingHelper.present
-      && existingHelper.value !== CLAUDE_API_KEY_HELPER
+      && existingHelper.value !== desiredHelper
       && (
         previousHelper === undefined
         || !valuesEqual(existingHelper.value, previousHelper.applied)
@@ -2247,5 +2257,5 @@ async function main() {
 }
 
 if (isConfigureClientsMain()) {
-  await main();
+  void main();
 }

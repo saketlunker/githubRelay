@@ -1,8 +1,12 @@
-# Copilot Harness Gateway
+# GitHub Model Relay
 
-Private, loopback-only Windows gateway for using models included with a GitHub
-Copilot subscription from Claude Code, Codex CLI, OpenCode, Pi, and compatible
-OpenAI/Anthropic clients without running VS Code.
+Private source for the cross-platform **GitHub Model Relay** desktop app and
+its headless Windows gateway. It lets Claude Code, Codex CLI, OpenCode, Pi,
+and compatible OpenAI/Anthropic clients use models available through a user's
+GitHub Copilot subscription without running VS Code.
+
+> **Unofficial community tool.** This project is not affiliated with or
+> endorsed by GitHub.
 
 > [!CAUTION]
 > This project uses an unofficial, reverse-engineered Copilot backend. It may
@@ -20,6 +24,13 @@ protocol translation.
 
 ## What it provides
 
+- An Electron tray application for Windows, macOS, and Linux that bundles
+  Electron/Node and the pinned gateway backend.
+- A native settings window for authentication, status, dynamic models and
+  reasoning controls, clients, signed updates, and diagnostics.
+- Public update metadata and signed installers in
+  [`saketlunker/github-model-relay`](https://github.com/saketlunker/github-model-relay);
+  source remains private in this repository.
 - One-command, per-user Windows 10/11 installation from a cloned checkout.
 - No administrator requirement under normal Task Scheduler policy.
 - No VS Code process or VS Code installation.
@@ -65,6 +76,30 @@ Claude Code / Codex / OpenCode / Pi / API clients
 Task Scheduler -> hidden PowerShell launcher -> singleton Node supervisor
 ```
 
+The desktop application replaces the Task Scheduler launcher with an Electron
+tray controller while reusing the same Node supervisor and security boundary.
+See [`docs/desktop-product-spec.md`](docs/desktop-product-spec.md) for the
+cross-platform architecture, trust model, migration, and acceptance criteria.
+
+## Desktop development
+
+```powershell
+npm ci --ignore-scripts --no-audit --no-fund
+npm run typecheck:desktop
+npm test
+npm run pack:desktop
+```
+
+`pack:desktop` creates an unpacked development package for the current
+platform. Production release publishing is fail-closed until the internal
+corporate signing adapter in
+[`docs/corporate-signing-contract.md`](docs/corporate-signing-contract.md) is
+configured. Never publish the unsigned development installer.
+
+The currently supported package targets are per-user NSIS on Windows, signed
+DMG/updater ZIP on macOS, and AppImage/DEB on Linux. The desktop package needs
+no external Node.js or VS Code installation.
+
 The maintained upstream already implements Anthropic Messages, OpenAI
 Responses, Chat Completions, model discovery, Copilot token refresh, and
 provider-specific translation. This project adds only Windows lifecycle,
@@ -82,7 +117,7 @@ The public proxy exposes only these route families:
 Upstream `/token`, `/admin`, `/usage-viewer`, and arbitrary routes are not
 reachable through the public port.
 
-## Prerequisites
+## Headless Windows prerequisites
 
 - Windows 10 or Windows 11.
 - PowerShell 5.1 or newer.

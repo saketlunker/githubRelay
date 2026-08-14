@@ -1,0 +1,142 @@
+name: Release desktop
+
+on:
+  push:
+    tags:
+      - "desktop-v*"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel
+        required: true
+        type: choice
+        options:
+          - beta
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-sign:
+    environment: model-relay-production
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            class: windows
+          - os: macos-latest
+            class: macos
+          - os: ubuntu-latest
+            class: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - name: Build packages
+        run: npm run dist:desktop
+      - name: Generate SBOM
+        shell: bash
+        run: npm sbom --sbom-format cyclonedx > apps/desktop/dist-packages/sbom.cdx.json
+      - name: Corporate sign
+        run: >
+          node scripts/release/corporate-signing-adapter.mjs
+          sign
+          apps/desktop/dist-packages
+          apps/desktop/signed-packages
+          ${{ matrix.class }}
+        env:
+          MODEL_RELAY_SIGNING_CLIENT: ${{ vars.MODEL_RELAY_SIGNING_CLIENT }}
+      - name: Verify corporate signatures
+        run: >
+          node scripts/release/corporate-signing-adapter.mjs
+          verify
+          apps/desktop/signed-packages
+          unused
+          ${{ matrix.class }}
+        env:
+          MODEL_RELAY_SIGNING_CLIENT: ${{ vars.MODEL_RELAY_SIGNING_CLIENT }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-${{ matrix.class }}
+          path: apps/desktop/signed-packages
+          if-no-files-found: error
+
+  publish:
+    needs: build-sign
+    environment: model-relay-production
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.13.0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: signed-*
+          merge-multiple: true
+          path: release-assets
+      - name: Resolve version and channel
+        id: release
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#desktop-v}"
+            channel="stable"
+          else
+            version="$(node -p "require('./apps/desktop/package.json').version")"
+            channel="${{ inputs.channel }}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Create release manifest
+        run: >
+          node scripts/release/create-release-manifest.mjs
+          release-assets
+          ${{ steps.release.outputs.version }}
+          ${{ steps.release.outputs.channel }}
+        env:
+          MODEL_RELAY_MANIFEST_KEY_ID: ${{ vars.MODEL_RELAY_MANIFEST_KEY_ID }}
+      - name: Sign manifest
+        run: >
+          node scripts/release/corporate-signing-adapter.mjs
+          sign
+          release-assets/release-manifest.json
+          release-assets/release-manifest.sig
+          manifest
+        env:
+          MODEL_RELAY_SIGNING_CLIENT: ${{ vars.MODEL_RELAY_SIGNING_CLIENT }}
+      - name: Verify manifest
+        run: >
+          node scripts/release/corporate-signing-adapter.mjs
+          verify
+          release-assets/release-manifest.json
+          unused
+          manifest
+        env:
+          MODEL_RELAY_SIGNING_CLIENT: ${{ vars.MODEL_RELAY_SIGNING_CLIENT }}
+      - name: Publish verified public release
+        shell: bash
+        run: |
+          prerelease=""
+          if [[ "${{ steps.release.outputs.channel }}" == "beta" ]]; then
+            prerelease="--prerelease"
+          fi
+          gh release create \
+            "v${{ steps.release.outputs.version }}" \
+            release-assets/* \
+            --repo saketlunker/github-model-relay \
+            --title "GitHub Model Relay ${{ steps.release.outputs.version }}" \
+            --notes "Unofficial community tool. See the signed release manifest." \
+            $prerelease
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASES_TOKEN }}

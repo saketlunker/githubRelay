@@ -3,3 +3,7 @@ node_modules/
 .coverage/
 .test-output/
 .tmp/
+apps/desktop/dist/
+apps/desktop/dist-packages/
+apps/desktop/.gateway-release/
+apps/desktop/.gateway-release.zip

@@ -1,15 +1,24 @@
 {
-  "name": "copilot-harness-gateway",
-  "version": "0.1.0",
+  "name": "github-model-relay-code",
+  "version": "0.2.0",
   "private": true,
-  "description": "Private, loopback-only Windows supervisor for a pinned GitHub Copilot compatibility gateway.",
+  "description": "Private source for the unofficial GitHub Model Relay desktop and headless gateway.",
   "type": "module",
+  "workspaces": [
+    "apps/desktop"
+  ],
   "engines": {
     "node": ">=22.13.0"
   },
   "scripts": {
-    "test": "node --test --test-concurrency=1 tests/node/*.test.mjs",
-    "test:runtime": "node --test --test-concurrency=1 tests/node/supervisor.test.mjs"
+    "test": "npm run test:gateway && npm run test:desktop",
+    "test:gateway": "node --test --test-concurrency=1 tests/node/*.test.mjs",
+    "test:runtime": "node --test --test-concurrency=1 tests/node/supervisor.test.mjs",
+    "test:desktop": "npm test --workspace @github-model-relay/desktop",
+    "typecheck:desktop": "npm run typecheck --workspace @github-model-relay/desktop",
+    "build:desktop": "npm run build --workspace @github-model-relay/desktop",
+    "pack:desktop": "npm run pack --workspace @github-model-relay/desktop",
+    "dist:desktop": "npm run dist --workspace @github-model-relay/desktop"
   },
   "dependencies": {
     "@jeffreycao/copilot-api": "2.0.1",
