@@ -190,6 +190,11 @@ test('Windows migration stages only allowlisted legacy state and preserves desir
     now: () => new Date('2026-08-14T00:00:00.000Z'),
   });
   assert.equal(record.legacyWasRunning, true);
+  const settings = JSON.parse(
+    await readFile(path.join(target, 'state', 'desktop-settings.json'), 'utf8'),
+  );
+  assert.equal(settings.launchAtLogin, true);
+  assert.equal(settings.closeToTray, true);
   assert.equal(
     await readFile(path.join(target, 'data', 'backend', 'github_token'), 'utf8'),
     'token',

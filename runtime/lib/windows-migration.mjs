@@ -201,6 +201,16 @@ export async function stageLegacyWindowsMigration({
       legacyWasRunning: desired?.state === 'running',
       stagedAt: now().toISOString(),
     };
+    await atomicWriteJson(
+      path.join(staging, 'state', 'desktop-settings.json'),
+      {
+        schemaVersion: 1,
+        launchAtLogin: record.legacyWasRunning,
+        updateChannel: 'stable',
+        closeToTray: true,
+        createdAt: record.stagedAt,
+      },
+    );
     await atomicWriteJson(path.join(staging, RECORD), record);
     await rename(staging, path.resolve(targetRoot));
     protectTree(targetRoot);

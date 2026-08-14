@@ -10,6 +10,7 @@ function desktopEscape(value: string) {
 export async function setLaunchAtLogin(enabled: boolean) {
   if (process.platform === "win32" || process.platform === "darwin") {
     app.setLoginItemSettings({
+      name: "GitHub Model Relay",
       openAtLogin: enabled,
       args: enabled ? ["--hidden"] : [],
     });
