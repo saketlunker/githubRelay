@@ -149,7 +149,7 @@ test('Claude merge is deep-targeted, preserves unrelated values, and protects a 
   assert.deepEqual(merged.permissions, current.permissions);
   assert.equal(merged.env.KEEP_ME, 'yes');
   assert.equal(merged.model, 'user/default');
-  assert.equal(merged.apiKeyHelper, CLAUDE_API_KEY_HELPER);
+  assert.equal(merged.apiKeyHelper, claudeApiKeyHelper());
   assert.equal(merged.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:4141');
   assert.equal(merged.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'claude-opus-5');
   assert.equal(current.apiKeyHelper, undefined, 'the input object is not mutated');
@@ -186,7 +186,7 @@ test('Claude configuration backs up changed files and byte-identical reruns crea
   assert.equal(configured.permissions.allow[0], 'Read');
   assert.equal(configured.env.KEEP_ME, 'yes');
   assert.equal(configured.model, 'user/default');
-  assert.equal(configured.apiKeyHelper, CLAUDE_API_KEY_HELPER);
+  assert.equal(configured.apiKeyHelper, claudeApiKeyHelper());
   assert.equal(
     configured.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
     'claude-sonnet-4-20260101',

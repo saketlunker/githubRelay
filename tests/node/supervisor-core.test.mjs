@@ -67,12 +67,12 @@ test("redaction removes known and patterned secrets", () => {
 });
 
 test("path resolution cannot escape an immutable release", () => {
-  const root = path.resolve("C:\\example\\release");
+  const root = path.resolve("example", "release");
   assert.equal(
-    resolveInside(root, "runtime\\supervisor.mjs"),
-    path.resolve(root, "runtime\\supervisor.mjs"),
+    resolveInside(root, path.join("runtime", "supervisor.mjs")),
+    path.resolve(root, "runtime", "supervisor.mjs"),
   );
-  assert.throws(() => resolveInside(root, "..\\outside.mjs"), /escapes/);
+  assert.throws(() => resolveInside(root, path.join("..", "outside.mjs")), /escapes/);
   assert.throws(() => resolveInside(root, path.resolve("outside.mjs")), /relative/);
 });
 
