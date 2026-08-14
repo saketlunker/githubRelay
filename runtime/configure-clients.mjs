@@ -437,7 +437,7 @@ function pathLabel(jsonPath) {
   return jsonPath.join('.');
 }
 
-function makeOwnedPath(pathSegments, original, applied) {
+function makeOwnedPath(pathSegments, original, applied, desired = {}) {
   const originalRecord = { present: original.present };
   if (original.present) {
     originalRecord.value = cloneJson(original.value);
@@ -446,6 +446,9 @@ function makeOwnedPath(pathSegments, original, applied) {
     path: [...pathSegments],
     original: originalRecord,
     applied: cloneJson(applied),
+    ...(desired.mode === 'array-member'
+      ? { mode: desired.mode, member: desired.member }
+      : {}),
   };
 }
 
@@ -498,8 +501,13 @@ function prepareOwnedJsonChanges({
       );
     }
 
-    const original = previous?.original ?? current;
-    nextOwned.push(makeOwnedPath(desired.path, original, desired.value));
+    const original = desired.mode === 'array-member'
+      ? {
+          present: true,
+          value: desired.value.filter((item) => item !== desired.member),
+        }
+      : previous?.original ?? current;
+    nextOwned.push(makeOwnedPath(desired.path, original, desired.value, desired));
     if (!current.present || !valuesEqual(current.value, desired.value)) {
       changes.push({ path: desired.path, value: cloneJson(desired.value) });
     }
@@ -660,12 +668,46 @@ function openCodeModels(models) {
   );
 }
 
+function openCodeEnabledProvidersDesired(source, previousEntry) {
+  const enabledPath = ['enabled_providers'];
+  const current = getJsonPathState(source, enabledPath);
+  if (!current.present) {
+    return null;
+  }
+  if (
+    !Array.isArray(current.value)
+    || current.value.some((provider) => typeof provider !== 'string')
+  ) {
+    throw new Error('OpenCode enabled_providers must be an array of provider IDs.');
+  }
+
+  const previous = previousEntry?.ownedPaths?.find((entry) =>
+    jsonPathKey(entry.path) === jsonPathKey(enabledPath)
+    && entry.mode === 'array-member'
+    && entry.member === ANTHROPIC_PROVIDER_ID);
+  const alreadyEnabled = current.value.includes(ANTHROPIC_PROVIDER_ID);
+  if (alreadyEnabled && !previous) {
+    return null;
+  }
+
+  return {
+    path: enabledPath,
+    value: alreadyEnabled
+      ? [...current.value]
+      : [...current.value, ANTHROPIC_PROVIDER_ID],
+    mode: 'array-member',
+    member: ANTHROPIC_PROVIDER_ID,
+  };
+}
+
 function openCodeDesiredValues({
   baseUrl,
   models,
   defaultModel,
   fastModel,
   setDefault = false,
+  source = {},
+  previousEntry,
 }) {
   const desired = [
     {
@@ -701,6 +743,10 @@ function openCodeDesiredValues({
       },
     );
   }
+  const enabledProviders = openCodeEnabledProvidersDesired(source, previousEntry);
+  if (enabledProviders !== null) {
+    desired.push(enabledProviders);
+  }
   return desired;
 }
 
@@ -708,7 +754,7 @@ export function mergeOpenCodeJsonc(text, options) {
   const sourceText = text.length === 0 ? '{}\n' : text;
   const source = parseJsoncObject(sourceText, options.filePath ?? 'OpenCode configuration');
   const changes = [];
-  for (const desired of openCodeDesiredValues(options)) {
+  for (const desired of openCodeDesiredValues({ ...options, source })) {
     const current = getJsonPathState(source, desired.path);
     if (!current.present || !valuesEqual(current.value, desired.value)) {
       changes.push(desired);
@@ -1637,6 +1683,8 @@ async function planOpenCode({
       defaultModel: selections.defaultModel,
       fastModel: selections.fastModel,
       setDefault: options.setDefault,
+      source,
+      previousEntry,
     }),
     previousEntry,
     force: options.force,
@@ -1840,6 +1888,26 @@ function planOwnedJsonRemoval(client, entry, currentText) {
   for (const owned of entry.ownedPaths) {
     const current = getJsonPathState(source, owned.path);
     if (!current.present) {
+      continue;
+    }
+    if (owned.mode === 'array-member') {
+      if (!Array.isArray(current.value)) {
+        remaining.push(cloneJson(owned));
+        conflicts.push(`Managed value "${pathLabel(owned.path)}" is no longer an array.`);
+        continue;
+      }
+      const occurrences = current.value.filter((item) => item === owned.member).length;
+      if (occurrences === 0) {
+        continue;
+      }
+      if (occurrences !== 1) {
+        remaining.push(cloneJson(owned));
+        conflicts.push(`Managed array member "${owned.member}" is duplicated in "${pathLabel(owned.path)}".`);
+        continue;
+      }
+      const next = current.value.filter((item) => item !== owned.member);
+      setJsonPath(work, owned.path, next);
+      changes.push({ path: owned.path, value: cloneJson(next) });
       continue;
     }
     if (!valuesEqual(current.value, owned.applied)) {

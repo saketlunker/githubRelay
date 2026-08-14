@@ -318,7 +318,9 @@ ambiguous duplicate provider ownership across multiple files.
 
 The provider uses bundled `@ai-sdk/anthropic`, Anthropic Messages at
 `http://127.0.0.1:4141/v1`, environment substitution for the local key, and
-the dynamically discovered model catalog.
+the dynamically discovered model catalog. When `enabled_providers` already
+restricts the provider catalog, the adapter adds only its own provider ID and
+tracks that array member independently for safe uninstall.
 
 ### Pi coding agent
 

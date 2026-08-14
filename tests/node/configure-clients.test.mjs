@@ -268,6 +268,7 @@ test('OpenCode JSONC patch preserves comments, trailing commas, and unrelated se
   const original = `\uFEFF{
   // keep this comment
   "plugin": ["existing-plugin"],
+  "enabled_providers": ["github-copilot"],
   "permission": {
     "bash": "ask",
   },
@@ -283,6 +284,10 @@ test('OpenCode JSONC patch preserves comments, trailing commas, and unrelated se
   assert.match(configuredText, /"bash": "ask",\r?\n\s*}/);
   assert.deepEqual(configured.plugin, ['existing-plugin']);
   assert.equal(configured.permission.bash, 'ask');
+  assert.deepEqual(
+    configured.enabled_providers,
+    ['github-copilot', ANTHROPIC_PROVIDER_ID],
+  );
   assert.equal(
     configured.provider[ANTHROPIC_PROVIDER_ID].npm,
     '@ai-sdk/anthropic',
@@ -303,6 +308,30 @@ test('OpenCode JSONC patch preserves comments, trailing commas, and unrelated se
     configured.model,
     `${ANTHROPIC_PROVIDER_ID}/claude-sonnet-4-20260101`,
   );
+});
+
+test('OpenCode allowlist removal preserves provider entries added later by the user', async (t) => {
+  const install = await makeInstall(t);
+  const configPath = path.join(install.home, '.config', 'opencode', 'opencode.json');
+  await mkdir(path.dirname(configPath), { recursive: true });
+  await writeFile(
+    configPath,
+    `${JSON.stringify({ enabled_providers: ['github-copilot'] }, null, 2)}\n`,
+  );
+
+  await runOffline(configureOptions(install, ['--clients', 'opencode']));
+  const edited = JSON.parse(await readFile(configPath, 'utf8'));
+  edited.enabled_providers.push('user-added-provider');
+  await writeFile(configPath, `${JSON.stringify(edited, null, 2)}\n`);
+
+  const removed = await runOffline(removeOptions(install, ['--clients', 'opencode']));
+  const final = JSON.parse(await readFile(configPath, 'utf8'));
+  assert.deepEqual(
+    final.enabled_providers,
+    ['github-copilot', 'user-added-provider'],
+  );
+  assert.equal(Object.hasOwn(final.provider ?? {}, ANTHROPIC_PROVIDER_ID), false);
+  assert.deepEqual(removed.output.clients[0].files[0].conflicts ?? [], []);
 });
 
 test('OpenCode refuses dual-file provider ambiguity before writing anything', async (t) => {
