@@ -325,17 +325,26 @@ function Initialize-CHGDirectories {
 
     if (-not $SkipAcl) {
         $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-        $arguments = @(
-            $Paths.Root,
-            '/inheritance:r',
-            '/grant:r',
-            "*${sid}:(OI)(CI)F",
-            '*S-1-5-18:(OI)(CI)F',
-            '/Q'
-        )
-        & "$env:SystemRoot\System32\icacls.exe" @arguments | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            throw "Unable to restrict the install directory ACL: $($Paths.Root)"
+        try {
+            $acl = [Security.AccessControl.DirectorySecurity]::new()
+            $acl.SetAccessRuleProtection($true, $false)
+            $inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+                [Security.AccessControl.InheritanceFlags]::ObjectInherit
+            foreach ($identity in @($sid, 'S-1-5-18')) {
+                $principal = [Security.Principal.SecurityIdentifier]::new($identity)
+                $rule = [Security.AccessControl.FileSystemAccessRule]::new(
+                    $principal,
+                    [Security.AccessControl.FileSystemRights]::FullControl,
+                    $inheritance,
+                    [Security.AccessControl.PropagationFlags]::None,
+                    [Security.AccessControl.AccessControlType]::Allow
+                )
+                $null = $acl.AddAccessRule($rule)
+            }
+            Set-Acl -LiteralPath $Paths.Root -AclObject $acl
+        }
+        catch {
+            throw "Unable to restrict the install directory ACL '$($Paths.Root)': $($_.Exception.Message)"
         }
     }
 }

@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; font-src 'none'; base-uri 'none'; form-action 'none'"
+    >
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GitHub Model Relay</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Settings sections">
+        <header class="brand">
+          <div class="brand-mark" aria-hidden="true">MR</div>
+          <div>
+            <strong>GitHub Model Relay</strong>
+            <span>Unofficial community tool</span>
+          </div>
+        </header>
+        <nav id="navigation">
+          <button class="nav-item active" data-page="overview">Overview</button>
+          <button class="nav-item" data-page="models">Models</button>
+          <button class="nav-item" data-page="clients">Clients</button>
+          <button class="nav-item" data-page="updates">Updates</button>
+          <button class="nav-item" data-page="security">Security &amp; diagnostics</button>
+        </nav>
+        <footer>
+          <span id="version">Version —</span>
+          <a href="https://github.com/saketlunker/github-model-relay">Release notes</a>
+        </footer>
+      </aside>
+
+      <main>
+        <div id="notice" class="notice hidden" role="status" aria-live="polite"></div>
+
+        <section class="page active" data-page-content="overview">
+          <header class="page-header">
+            <div>
+              <p class="eyebrow">LOCAL GATEWAY</p>
+              <h1>Overview</h1>
+              <p>Private model access for local coding tools, without VS Code.</p>
+            </div>
+            <span id="status-pill" class="status-pill neutral">Loading</span>
+          </header>
+
+          <div class="hero-card">
+            <div>
+              <span class="field-label">API endpoint</span>
+              <code id="endpoint">http://127.0.0.1:4141</code>
+            </div>
+            <div class="button-row">
+              <button id="start-gateway" class="primary">Start</button>
+              <button id="stop-gateway">Stop</button>
+              <button id="restart-gateway">Restart</button>
+            </div>
+          </div>
+
+          <div class="grid two">
+            <article class="card">
+              <h2>GitHub authentication</h2>
+              <p id="auth-description">Checking authentication state…</p>
+              <div class="button-row">
+                <button id="authenticate" class="primary">Sign in with GitHub</button>
+                <button id="cancel-auth" class="hidden">Cancel</button>
+              </div>
+              <pre id="auth-output" class="auth-output hidden" aria-live="polite"></pre>
+            </article>
+            <article class="card">
+              <h2>Startup</h2>
+              <label class="switch-row">
+                <span>
+                  <strong>Launch at login</strong>
+                  <small>Start the tray application for this user.</small>
+                </span>
+                <input id="launch-at-login" type="checkbox">
+              </label>
+              <label class="switch-row">
+                <span>
+                  <strong>Close to tray</strong>
+                  <small>Keep the gateway available when settings closes.</small>
+                </span>
+                <input id="close-to-tray" type="checkbox">
+              </label>
+            </article>
+          </div>
+
+          <div class="grid three metrics">
+            <article class="card"><span>Models</span><strong id="model-count">—</strong></article>
+            <article class="card"><span>Clients detected</span><strong id="client-count">—</strong></article>
+            <article class="card"><span>Active release</span><strong id="active-release">—</strong></article>
+          </div>
+        </section>
+
+        <section class="page" data-page-content="models">
+          <header class="page-header">
+            <div>
+              <p class="eyebrow">CAPABILITY CATALOG</p>
+              <h1>Models</h1>
+              <p>Capabilities come from GitHub and refresh without an app update.</p>
+            </div>
+            <button id="refresh-models" class="primary">Refresh models</button>
+          </header>
+          <div class="toolbar">
+            <input id="model-search" type="search" placeholder="Search models" aria-label="Search models">
+            <span id="model-summary"></span>
+          </div>
+          <div id="models-list" class="model-list" aria-live="polite"></div>
+        </section>
+
+        <section class="page" data-page-content="clients">
+          <header class="page-header">
+            <div>
+              <p class="eyebrow">CODING HARNESSES</p>
+              <h1>Clients</h1>
+              <p>Preview every change before writing backed-up configuration.</p>
+            </div>
+          </header>
+          <div id="clients-list" class="client-list"></div>
+          <div class="card action-card">
+            <label class="switch-row">
+              <span>
+                <strong>Use relay defaults</strong>
+                <small>Set configured clients to the recommended model aliases.</small>
+              </span>
+              <input id="set-client-defaults" type="checkbox">
+            </label>
+            <div class="button-row">
+              <button id="preview-clients">Preview changes</button>
+              <button id="configure-clients" class="primary">Apply configuration</button>
+              <button id="restore-clients" class="danger">Restore owned values</button>
+            </div>
+            <pre id="client-output" class="result-output hidden"></pre>
+          </div>
+        </section>
+
+        <section class="page" data-page-content="updates">
+          <header class="page-header">
+            <div>
+              <p class="eyebrow">SIGNED RELEASES</p>
+              <h1>Updates</h1>
+              <p>Artifacts come from the public releases-only repository.</p>
+            </div>
+          </header>
+          <article class="card">
+            <label>
+              <span class="field-label">Channel</span>
+              <select id="update-channel">
+                <option value="stable">Stable</option>
+                <option value="beta">Beta</option>
+              </select>
+            </label>
+            <dl class="details">
+              <div><dt>Update state</dt><dd id="update-state">Idle</dd></div>
+              <div><dt>Available version</dt><dd id="available-version">—</dd></div>
+              <div><dt>Signature policy</dt><dd>Corporate manifest + OS signature</dd></div>
+            </dl>
+            <progress id="update-progress" max="100" value="0" class="hidden"></progress>
+            <p id="update-message"></p>
+            <div class="button-row">
+              <button id="check-updates" class="primary">Check for updates</button>
+              <button id="download-update" disabled>Download update</button>
+              <button id="install-update" disabled>Restart and install</button>
+            </div>
+          </article>
+        </section>
+
+        <section class="page" data-page-content="security">
+          <header class="page-header">
+            <div>
+              <p class="eyebrow">LOCAL SECURITY</p>
+              <h1>Security &amp; diagnostics</h1>
+              <p>No telemetry. Prompts, responses, tokens, and keys are excluded from wrapper logs.</p>
+            </div>
+          </header>
+          <div class="grid two">
+            <article class="card">
+              <h2>Security posture</h2>
+              <dl class="details">
+                <div><dt>Listener</dt><dd>127.0.0.1 only</dd></div>
+                <div><dt>Client authentication</dt><dd>Required</dd></div>
+                <div><dt>Credential storage</dt><dd id="secure-storage">—</dd></div>
+                <div><dt>Telemetry</dt><dd>Disabled</dd></div>
+              </dl>
+            </article>
+            <article class="card">
+              <h2>Paths</h2>
+              <dl class="details">
+                <div><dt>Application data</dt><dd id="data-path">—</dd></div>
+                <div><dt>Logs</dt><dd id="logs-path">—</dd></div>
+                <div><dt>Backups</dt><dd id="backups-path">—</dd></div>
+              </dl>
+            </article>
+          </div>
+          <article class="warning-card">
+            <strong>Important limitation</strong>
+            <p>This is an unofficial reverse-engineered compatibility layer. GitHub can change service behavior, require authentication again, or enforce abuse controls. Model identity and reasoning metadata are server claims, not cryptographic attestation.</p>
+          </article>
+        </section>
+      </main>
+    </div>
+    <script src="./index.js"></script>
+  </body>
+</html>

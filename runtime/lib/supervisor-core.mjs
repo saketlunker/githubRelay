@@ -244,10 +244,12 @@ export function resolveInside(parent, relativePath) {
   }
   const root = path.resolve(parent);
   const resolved = path.resolve(root, relativePath);
-  const comparisonRoot = `${root.toLowerCase()}${path.sep}`;
+  const comparable = (value) =>
+    process.platform === "win32" ? value.toLowerCase() : value;
+  const comparisonRoot = `${comparable(root)}${path.sep}`;
   if (
-    resolved.toLowerCase() !== root.toLowerCase() &&
-    !resolved.toLowerCase().startsWith(comparisonRoot)
+    comparable(resolved) !== comparable(root) &&
+    !comparable(resolved).startsWith(comparisonRoot)
   ) {
     throw new Error("Release entrypoint escapes the immutable version");
   }

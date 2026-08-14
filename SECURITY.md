@@ -2,9 +2,9 @@
 
 ## Scope
 
-Copilot Harness Gateway is a private, single-user, loopback-only compatibility
+GitHub Model Relay is a private, single-user, loopback-only compatibility
 wrapper. It is not designed as a shared service, LAN gateway, hosted proxy, or
-security boundary between processes running as the same Windows user.
+security boundary between processes running as the same operating-system user.
 
 ## Secrets
 
@@ -18,10 +18,13 @@ Never commit:
 - copied client configuration
 - logs or SQLite state
 
-Runtime credentials live only below
-`%LOCALAPPDATA%\CopilotHarnessGateway` and inherit an explicit NTFS ACL for the
-current user and SYSTEM. The backend's supported credential store uses
-plaintext files; Windows administrators can take ownership.
+Desktop state lives in the platform state directory documented in
+`docs/desktop-product-spec.md`. Windows grants only the current user and
+SYSTEM; Unix-like platforms use user-only modes. Desktop builds encrypt the
+GitHub credential at rest with Electron `safeStorage` and materialize it in the
+private backend directory only while the gateway is active. Linux
+`basic_text` storage is rejected. Operating-system administrators can still
+access user processes and storage.
 
 The service must never be launched with upstream `--github-token`,
 `--show-token`, or `--verbose`.
@@ -44,6 +47,11 @@ and usage-viewer routes.
 - Installation uses `npm ci --ignore-scripts`, never `npx`.
 - Update requires exact semver and, for a new upstream pin, expected npm SRI.
 - Previous immutable releases are retained for rollback.
+- Public desktop updates require OS signing, a separately signed canonical
+  manifest, SHA-256/size verification, target/channel checks, and compatible
+  state schemas.
+- Production release workflows fail closed when corporate signing evidence is
+  missing.
 - Review upstream source, release provenance, license, and protocol changes
   before approving a pin.
 
