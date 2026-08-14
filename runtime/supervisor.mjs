@@ -103,12 +103,29 @@ function writeAtomicJson(file, value) {
     mode: 0o600,
     flag: "wx",
   });
-  try {
-    renameSync(temporary, file);
-  } catch (error) {
-    rmSync(temporary, { force: true });
-    throw error;
+  let lastError;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      renameSync(temporary, file);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (
+        !["EACCES", "EEXIST", "EPERM"].includes(error?.code)
+        || attempt === 5
+      ) {
+        break;
+      }
+      Atomics.wait(
+        new Int32Array(new SharedArrayBuffer(4)),
+        0,
+        0,
+        25 * (2 ** attempt),
+      );
+    }
   }
+  rmSync(temporary, { force: true });
+  throw lastError;
 }
 
 function sleep(milliseconds) {
