@@ -546,7 +546,7 @@ test('Pi merges the provider and optional defaults without disturbing other prov
   assert.equal(models.keep, true);
   assert.equal(models.providers.existing.models[0].custom, true);
   assert.deepEqual(models.providers[ANTHROPIC_PROVIDER_ID], {
-    baseUrl: 'http://127.0.0.1:4141/v1',
+    baseUrl: 'http://127.0.0.1:4141',
     api: 'anthropic-messages',
     apiKey: '$COPILOT_HARNESS_GATEWAY_API_KEY',
     models: [

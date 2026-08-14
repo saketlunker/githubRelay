@@ -722,7 +722,7 @@ function piModelsDesiredValues({ baseUrl, models }) {
   return [
     {
       path: ['providers', ANTHROPIC_PROVIDER_ID, 'baseUrl'],
-      value: `${baseUrl}/v1`,
+      value: baseUrl,
     },
     {
       path: ['providers', ANTHROPIC_PROVIDER_ID, 'api'],

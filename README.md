@@ -336,7 +336,7 @@ or:
 %USERPROFILE%\.pi\agent\settings.json
 ```
 
-The provider uses `anthropic-messages`, the `/v1` base URL, and
+The provider uses `anthropic-messages`, the gateway root URL, and
 `$COPILOT_HARNESS_GATEWAY_API_KEY`. Model entries contain discovered IDs only;
 Pi supplies its documented conservative defaults instead of this project
 inventing context/output limits.
