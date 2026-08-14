@@ -200,6 +200,23 @@ test('Windows migration stages only allowlisted legacy state and preserves desir
     'token',
   );
   await assert.rejects(readFile(path.join(target, 'ignored.txt')), /ENOENT/);
+  const recordPath = path.join(target, 'state', 'desktop-migration.json');
+  await writeFile(
+    recordPath,
+    JSON.stringify({ ...record, state: 'completed' }),
+  );
+  let protectionCalls = 0;
+  const completed = await stageLegacyWindowsMigration({
+    legacyRoot: legacy,
+    targetRoot: target,
+    platform: 'win32',
+    fetchImpl,
+    protectTree: () => {
+      protectionCalls += 1;
+    },
+  });
+  assert.equal(completed, null);
+  assert.equal(protectionCalls, 0);
 });
 
 test('release manifest requires a valid signature, target, schema, and asset hash', () => {

@@ -70,7 +70,7 @@ function protectWindowsRoot(root) {
   const script = [
     "$ErrorActionPreference='Stop'",
     "$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
-    `& \"$env:SystemRoot\\System32\\icacls.exe\" '${quoted}' '/inheritance:r' '/grant:r' \"*\${sid}:(OI)(CI)F\" '*S-1-5-18:(OI)(CI)F' '/grant' \"*\${sid}:F\" '*S-1-5-18:F' '/T' '/Q' | Out-Null`,
+    `& \"$env:SystemRoot\\System32\\icacls.exe\" '${quoted}' '/inheritance:r' '/grant:r' \"*\${sid}:(OI)(CI)F\" '*S-1-5-18:(OI)(CI)F' '/Q' | Out-Null`,
     "if($LASTEXITCODE -ne 0){throw 'icacls failed'}",
   ].join(';');
   const encoded = Buffer.from(script, 'utf16le').toString('base64');

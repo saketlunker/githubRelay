@@ -128,8 +128,16 @@ export async function stageLegacyWindowsMigration({
     return null;
   }
   if (await fileExists(targetRoot)) {
-    protectTree(targetRoot);
-    const existing = await readJsonFile(path.join(targetRoot, RECORD));
+    let existing;
+    try {
+      existing = await readJsonFile(path.join(targetRoot, RECORD));
+    } catch (error) {
+      if (!['EACCES', 'EPERM'].includes(error?.cause?.code)) {
+        throw error;
+      }
+      protectTree(targetRoot);
+      existing = await readJsonFile(path.join(targetRoot, RECORD));
+    }
     if (existing?.state !== 'staged') {
       return null;
     }
