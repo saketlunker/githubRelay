@@ -32,3 +32,12 @@ test("prerelease gateway versions parse without breaking comparison", () => {
   assert.equal(parseGatewayVersion("gateway-0.3.0-rc.1-backend-2.0.1-abc"), "0.3.0-rc.1");
   assert.equal(gatewayNeedsUpdate("gateway-0.2.9-backend-2.0.1-abc", "0.2.10"), true);
 });
+
+test("the payload pins an exact backend version for the update call", async () => {
+  const { payloadBackendVersion } = await import("../lib/environment.mjs");
+  const pinned = payloadBackendVersion();
+
+  // gateway.ps1 update validates -Version against the source bundle's pin and
+  // rejects anything else, so an inexact value would fail every upgrade.
+  assert.match(pinned ?? "", /^\d+\.\d+\.\d+$/);
+});

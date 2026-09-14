@@ -19,6 +19,22 @@ export function packageVersion() {
   return JSON.parse(readFileSync(join(PACKAGE_DIR, "package.json"), "utf8")).version;
 }
 
+export const BACKEND_PACKAGE = "@jeffreycao/copilot-api";
+
+/**
+ * The exact backend version pinned by the payload. `gateway.ps1 update`
+ * validates its -Version against this pin and rejects anything else, including
+ * the gateway's own version.
+ */
+export function payloadBackendVersion() {
+  try {
+    const manifest = JSON.parse(readFileSync(join(PAYLOAD_DIR, "package.json"), "utf8"));
+    return manifest.dependencies?.[BACKEND_PACKAGE];
+  } catch {
+    return undefined;
+  }
+}
+
 export function isWindows() {
   return process.platform === "win32";
 }

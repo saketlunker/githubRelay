@@ -1,9 +1,9 @@
 {
   "product": "githubrelay",
   "channel": "prod",
-  "version": "0.2.8",
-  "publishedAt": "2026-09-14T15:11:02Z",
-  "notesUrl": "https://github.com/saketlunker/githubRelay/releases/tag/npm-v0.2.8",
+  "version": "0.2.9",
+  "publishedAt": "2026-09-14T15:23:35Z",
+  "notesUrl": "https://github.com/saketlunker/githubRelay/releases/tag/npm-v0.2.9",
   "sourceRepository": "saketlunker/githubRelay",
   "install": {
     "powershell": "irm https://raw.githubusercontent.com/saketlunker/githubRelay/main/web-install.ps1 | iex",
@@ -11,8 +11,8 @@
   },
   "fallback": {
     "reason": "Some corporate networks cannot reach registry.npmjs.org. GitHub Releases stays reachable, and npm allows installing from a local file even when allow-remote is none.",
-    "tarball": "https://github.com/saketlunker/githubRelay/releases/download/npm-v0.2.8/githubrelay-0.2.8.tgz",
-    "sha256Url": "https://github.com/saketlunker/githubRelay/releases/download/npm-v0.2.8/githubrelay-0.2.8.tgz.sha256"
+    "tarball": "https://github.com/saketlunker/githubRelay/releases/download/npm-v0.2.9/githubrelay-0.2.9.tgz",
+    "sha256Url": "https://github.com/saketlunker/githubRelay/releases/download/npm-v0.2.9/githubrelay-0.2.9.tgz.sha256"
   },
   "bootstrap": {
     "strategy": "package-reinstall"

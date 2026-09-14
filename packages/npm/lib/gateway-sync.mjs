@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { compareVersions, packageVersion, runGateway, runGatewayJson } from "./environment.mjs";
+import { compareVersions, packageVersion, payloadBackendVersion, runGateway, runGatewayJson } from "./environment.mjs";
 
 const RELEASE_ID = /^gateway-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-backend-/;
 
@@ -70,8 +70,15 @@ export function ensureGatewayCurrent({ announce = console.error } = {}) {
     return { changed: false, reason: "current" };
   }
 
+  const backendVersion = payloadBackendVersion();
+  if (!backendVersion) {
+    return { changed: false, reason: "payload does not pin a backend version" };
+  }
+
   announce(`Updating the gateway from ${parseGatewayVersion(active)} to ${target}...`);
-  const result = runGateway("update");
+  // -Version is the pinned backend version, which the installer validates
+  // against the source bundle; passing the gateway version is rejected.
+  const result = runGateway("update", ["-Version", backendVersion]);
   if (result.error || result.status !== 0) {
     writeState({ ...state, failedGatewayUpdate: target });
     announce("Gateway update failed; continuing on the installed release. Run 'githubrelay doctor' for details.");
