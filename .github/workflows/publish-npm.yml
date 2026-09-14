@@ -47,7 +47,8 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # Needed to attach the packed tarball to the release for this tag.
+      contents: write
       # Required for trusted publishing and for provenance attestations.
       id-token: write
     steps:
@@ -119,12 +120,49 @@ jobs:
       - name: Publish
         if: github.event_name == 'push' || inputs.dry_run == false
         working-directory: packages/npm
-        run: npm publish --provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Trusted publishing needs no token, but it can only be configured on
+          # a package that already exists. Until either is set up, distribution
+          # happens through the GitHub Release attached to this tag, so skip
+          # rather than fail the run.
+          if [[ -z "${NODE_AUTH_TOKEN:-}" && "${NPM_TRUSTED_PUBLISHING:-}" != "true" ]]; then
+            echo "::notice::No npm credentials configured; skipping the registry publish."
+            echo "Set the NPM_TOKEN secret, or configure trusted publishing and set the"
+            echo "NPM_TRUSTED_PUBLISHING repository variable to true."
+            exit 0
+          fi
+
+          npm publish --provenance
         env:
           # Ignored once trusted publishing is configured on npmjs.com, which
           # is the preferred path. Needed for the very first publish, because a
           # trusted publisher can only be configured on an existing package.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TRUSTED_PUBLISHING: ${{ vars.NPM_TRUSTED_PUBLISHING }}
+
+      - name: Attach the tarball to the release
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        working-directory: packages/npm
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm pack --quiet
+          tarball="$(ls -1 *.tgz | head -n 1)"
+
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "githubrelay ${GITHUB_REF_NAME#npm-v}" \
+              --notes "Install: \`npm install -g https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$tarball && githubrelay setup\`"
+          fi
+
+          gh release upload "$GITHUB_REF_NAME" "$tarball" --clobber --repo "$GITHUB_REPOSITORY"
+          echo "Attached $tarball to $GITHUB_REF_NAME"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Dry run summary
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run
