@@ -20,6 +20,7 @@
 [CmdletBinding()]
 param(
     [string]$PackageName = 'githubrelay',
+    [string]$ManifestUrl = 'https://raw.githubusercontent.com/saketlunker/githubRelay/main/releases/prod/latest.json',
     [switch]$SkipSetup
 )
 
@@ -101,12 +102,56 @@ function Install-Launcher {
 
     # Routed through cmd.exe because npm on Windows is a shim that PowerShell
     # does not always invoke cleanly with forwarded arguments.
-    & cmd.exe /d /s /c "npm install -g $Package" 2>&1 |
+    & cmd.exe /d /s /c "npm install -g $Package@latest" 2>&1 |
         ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-    if ($LASTEXITCODE -ne 0) {
-        throw "npm install -g $Package failed with exit code $LASTEXITCODE."
+    if ($LASTEXITCODE -eq 0) {
+        Update-PathFromEnvironment
+        return
     }
+
+    Write-Warn 'The npm registry is not reachable from this network. Falling back to the GitHub release.'
+    Install-FromRelease
     Update-PathFromEnvironment
+}
+
+function Install-FromRelease {
+    $manifest = Invoke-RestMethod -Uri $ManifestUrl -TimeoutSec 30
+    $tarballUrl = $manifest.fallback.tarball
+    if (-not $tarballUrl) {
+        throw 'npm could not reach the registry and the release manifest publishes no fallback tarball.'
+    }
+
+    $workspace = Join-Path ([IO.Path]::GetTempPath()) ('githubrelay-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $workspace -Force | Out-Null
+    try {
+        $archive = Join-Path $workspace (Split-Path -Leaf $tarballUrl)
+        Write-Ok "Downloading $tarballUrl"
+        Invoke-WebRequest -Uri $tarballUrl -OutFile $archive -TimeoutSec 300 -UseBasicParsing
+
+        if ($manifest.fallback.PSObject.Properties['sha256Url']) {
+            $published = Invoke-RestMethod -Uri $manifest.fallback.sha256Url -TimeoutSec 30
+            $expected = [regex]::Match([string]$published, '[A-Fa-f0-9]{64}')
+            if ($expected.Success) {
+                $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($actual -ne $expected.Value.ToLowerInvariant()) {
+                    throw "Download failed verification. Expected $($expected.Value) but got $actual."
+                }
+                Write-Ok 'Checksum verified'
+            }
+        }
+
+        # npm blocks remote tarball specs by default (allow-remote=none) but
+        # still installs from a local file, which is why this is downloaded
+        # first rather than handed to npm as a URL.
+        & cmd.exe /d /s /c "npm install -g `"$archive`"" 2>&1 |
+            ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        if ($LASTEXITCODE -ne 0) {
+            throw "Installing the downloaded package failed with exit code $LASTEXITCODE."
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $workspace -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Resolve-Launcher {

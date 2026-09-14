@@ -1,5 +1,9 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { createWriteStream, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { get } from "node:https";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   MANIFEST_URL,
@@ -72,13 +76,76 @@ function installSpec(manifest, version) {
   return `${PACKAGE_NAME}@${version}`;
 }
 
-function reinstall(manifest, version) {
-  const spec = installSpec(manifest, version);
-  console.error(`Updating ${PRODUCT_NAME} to ${version}...`);
+function npmInstallGlobal(spec) {
   const result = isWindows()
     ? spawnSync("cmd.exe", ["/d", "/s", "/c", "npm", "install", "-g", "--force", spec], { stdio: "inherit" })
     : spawnSync("npm", ["install", "-g", "--force", spec], { stdio: "inherit" });
   return !result.error && result.status === 0;
+}
+
+function downloadTo(url, destination) {
+  return new Promise((resolve, reject) => {
+    const step = (target, redirectsRemaining) => {
+      const request = get(target, (response) => {
+        const status = response.statusCode ?? 0;
+        if (status >= 300 && status < 400 && response.headers.location) {
+          response.resume();
+          if (redirectsRemaining <= 0) return reject(new Error(`too many redirects for ${url}`));
+          return step(new URL(response.headers.location, target).toString(), redirectsRemaining - 1);
+        }
+        if (status !== 200) {
+          response.resume();
+          return reject(new Error(`HTTP ${status} for ${target}`));
+        }
+        const file = createWriteStream(destination);
+        response.pipe(file);
+        file.on("finish", () => file.close(() => resolve()));
+        file.on("error", reject);
+      });
+      request.setTimeout(120_000, () => request.destroy(new Error(`timed out fetching ${target}`)));
+      request.on("error", reject);
+    };
+    step(url, MAX_REDIRECTS);
+  });
+}
+
+/**
+ * Installs from a GitHub Release tarball for networks that cannot reach the
+ * npm registry. npm refuses remote tarball specs (allow-remote defaults to
+ * none), but installing from a downloaded file is still permitted.
+ */
+async function reinstallFromTarball(fallback, version) {
+  const url = fallback?.tarball;
+  if (typeof url !== "string" || !/^https:\/\//.test(url)) return false;
+
+  const workspace = mkdtempSync(join(tmpdir(), "githubrelay-update-"));
+  try {
+    const archive = join(workspace, `${PACKAGE_NAME}-${version}.tgz`);
+    console.error("Registry unavailable; falling back to the GitHub release.");
+    await downloadTo(url, archive);
+
+    if (typeof fallback.sha256Url === "string" && /^https:\/\//.test(fallback.sha256Url)) {
+      const published = await fetchText(fallback.sha256Url);
+      const expected = /[A-Fa-f0-9]{64}/.exec(published)?.[0];
+      const actual = createHash("sha256").update(readFileSync(archive)).digest("hex");
+      if (expected && expected.toLowerCase() !== actual) {
+        throw new Error(`checksum mismatch for ${url}`);
+      }
+    }
+
+    return npmInstallGlobal(archive);
+  } catch (error) {
+    console.error(`Fallback update failed: ${error instanceof Error ? error.message : error}`);
+    return false;
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+}
+
+async function reinstall(manifest, version) {
+  console.error(`Updating ${PRODUCT_NAME} to ${version}...`);
+  if (npmInstallGlobal(installSpec(manifest, version))) return true;
+  return reinstallFromTarball(manifest?.fallback, version);
 }
 
 export { installSpec };
@@ -107,7 +174,7 @@ export async function checkForUpdate({ quiet = true } = {}) {
   const strategy = manifest?.bootstrap?.strategy;
   if (strategy !== "package-reinstall") return false;
 
-  if (!reinstall(manifest, manifest.version)) {
+  if (!(await reinstall(manifest, manifest.version))) {
     console.error("Warning: update failed. Continuing with the installed version.");
     return false;
   }
