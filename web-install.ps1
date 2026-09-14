@@ -240,12 +240,18 @@ try {
     Write-Step 'Running setup'
     Write-Host ''
     & $shim setup
-    exit $LASTEXITCODE
+
+    # Deliberately no `exit`: this script is normally run as `irm ... | iex`,
+    # where `exit` would terminate the user's interactive PowerShell session.
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ''
+        Write-Warn "Setup exited with code $LASTEXITCODE. Run 'githubrelay doctor' for details."
+    }
 }
 catch {
     Write-Host ''
     Write-Host "Install failed: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host ''
     Write-Host 'If this keeps happening, copy everything above and send it over.' -ForegroundColor DarkGray
-    exit 1
+    # No `exit` here either: piped through `iex`, it would close the user's window.
 }
