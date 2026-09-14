@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -99,4 +99,48 @@ export function runGatewayJson(command, args = []) {
   } catch {
     return { ok: false, error: (result.stdout ?? "").trim() };
   }
+}
+
+/**
+ * Runs a gateway command while still showing its output live, handing each
+ * completed line to `onLine`. Used by device sign-in, which needs the code to
+ * be noticed as it is printed rather than after the command finishes.
+ */
+export function runGatewayWatched(command, args = [], { onLine } = {}) {
+  return new Promise((resolve) => {
+    if (!payloadInstalled()) {
+      return resolve({ status: 1, error: new Error(`The ${PRODUCT_NAME} payload is missing from the package.`) });
+    }
+    const shell = resolvePowerShell();
+    if (!shell) {
+      return resolve({ status: 1, error: new Error("PowerShell was not found.") });
+    }
+
+    const child = spawn(
+      shell.command,
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", GATEWAY_SCRIPT, command, ...args],
+      { cwd: PAYLOAD_DIR, stdio: ["inherit", "pipe", "pipe"] },
+    );
+
+    let pending = "";
+    const forward = (chunk, stream) => {
+      const text = chunk.toString();
+      stream.write(text);
+      if (!onLine) return;
+      pending += text;
+      let index;
+      while ((index = pending.indexOf("\n")) !== -1) {
+        onLine(pending.slice(0, index));
+        pending = pending.slice(index + 1);
+      }
+    };
+
+    child.stdout.on("data", (chunk) => forward(chunk, process.stdout));
+    child.stderr.on("data", (chunk) => forward(chunk, process.stderr));
+    child.on("error", (error) => resolve({ status: 1, error }));
+    child.on("close", (code) => {
+      if (pending && onLine) onLine(pending);
+      resolve({ status: code ?? 0 });
+    });
+  });
 }

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { writeFileSync } from "node:fs";
 
-import { PACKAGE_NAME, PRODUCT_NAME, packageVersion, runGateway } from "../lib/environment.mjs";
+import { PACKAGE_NAME, PRODUCT_NAME, packageVersion, runGateway, runGatewayWatched } from "../lib/environment.mjs";
 import { buildDoctorReport } from "../lib/doctor.mjs";
+import { createDeviceLoginWatcher } from "../lib/device-login.mjs";
 import { formatPreflight, runPreflight } from "../lib/preflight.mjs";
 import { checkForUpdate } from "../lib/update.mjs";
 
@@ -13,7 +14,6 @@ Usage: githubrelay <command> [options]
 Getting started
   setup              Install, sign in to GitHub, wire up your clients, and start
   doctor             Print a redacted diagnostic report you can share for support
-
 Everyday use
   status             Show gateway status
   health             Run a health check
@@ -58,7 +58,12 @@ function step(number, total, title) {
   console.log(`\n[${number}/${total}] ${title}`);
 }
 
-function setup(args) {
+async function signIn() {
+  console.log("A device code will appear below. It is copied to your clipboard automatically.\n");
+  return runGatewayWatched("authenticate", [], { onLine: createDeviceLoginWatcher({ announce: console.log }) });
+}
+
+async function setup(args) {
   const total = 5;
   console.log(`Setting up ${PRODUCT_NAME}.\n`);
 
@@ -77,22 +82,24 @@ function setup(args) {
   }
 
   step(3, total, "Signing in to GitHub");
-  console.log("A device code will appear below. Open the URL and enter the code.\n");
-  const auth = runGateway("authenticate", [], { interactive: true });
+  const auth = await signIn();
   if (auth.error || auth.status !== 0) {
     fail("\nSign-in failed or was cancelled. Re-run: githubrelay auth");
   }
 
-  step(4, total, "Configuring your clients");
-  const clients = runGateway("configure-clients", ["-Clients", "all"]);
-  if (clients.error || clients.status !== 0) {
-    console.error("Client configuration failed. Re-run later with: githubrelay clients");
-  }
-
-  step(5, total, "Starting the gateway");
+  // The gateway must be running before clients are configured: client setup
+  // discovers the model list from the loopback endpoint, which does not exist
+  // until the gateway is up.
+  step(4, total, "Starting the gateway");
   const start = runGateway("start");
   if (start.error || start.status !== 0) {
     fail("\nThe gateway did not start. Run 'githubrelay doctor' and share the output.");
+  }
+
+  step(5, total, "Configuring your clients");
+  const clients = runGateway("configure-clients", ["-Clients", "all"]);
+  if (clients.error || clients.status !== 0) {
+    console.error("Client configuration failed. Re-run with: githubrelay clients");
   }
 
   console.log(`\n${PRODUCT_NAME} is ready.`);
@@ -133,9 +140,13 @@ async function main() {
     case "doctor":
       return doctor(args);
     case "auth":
-    case "authenticate":
+    case "authenticate": {
       requirePreflight();
-      return passThrough("authenticate", args, { interactive: true });
+      const result = await signIn();
+      if (result.error) fail(result.error.message);
+      process.exit(result.status ?? 0);
+      return undefined;
+    }
     case "clients":
     case "configure-clients":
       requirePreflight();
