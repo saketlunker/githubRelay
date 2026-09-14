@@ -46,7 +46,19 @@ attestation.
 
 ## Publishing the npm launcher
 
-The `githubrelay` npm package is published by the
+The launcher is distributed two ways:
+
+- **PowerShell web installer** (`web-install.ps1`) — the path users are given.
+  It downloads the launcher tarball from the GitHub Release named in
+  `releases/prod/latest.json`, verifies the SHA-256 published beside it, and
+  puts `githubrelay` on PATH. This needs no npm registry account.
+- **npm registry** — optional, and prettier (`npm install -g githubrelay`).
+
+npm cannot be used to install the release tarball directly: npm 12 defaults to
+`allow-remote=none` and `allow-git=none`, so remote tarball and git specs are
+rejected before any download happens.
+
+Releases are cut by the
 [`publish-npm.yml`](../.github/workflows/publish-npm.yml) workflow, never from
 a maintainer's machine. GitHub-hosted runners reach `registry.npmjs.org`
 directly, and npm trusted publishing only supports cloud-hosted runners.
@@ -55,7 +67,8 @@ To ship a release:
 
 1. Bump `version` in the repository `package.json`.
 2. Run `node scripts/build-npm-payload.mjs`, which syncs the launcher version.
-3. Update `version` in `releases/prod/latest.json` to match.
+3. Update `version` and `dist.tarball` in `releases/prod/latest.json` to match
+   the tag you are about to push.
 4. Commit, then push a matching tag: `npm-v0.2.3`.
 
 The workflow refuses to publish when the tag, the launcher `package.json`, and
@@ -65,13 +78,25 @@ would make every installed launcher try to update on every run.
 Use the `workflow_dispatch` trigger with `dry_run` left enabled to pack and
 validate a release without publishing it.
 
-### Credentials
+### Checksums
 
-The first publish needs an `NPM_TOKEN` repository secret, because a trusted
-publisher can only be configured against a package that already exists.
+The workflow publishes `<tarball>.sha256` beside each tarball and refuses to
+overwrite an already-published asset. Do not commit a checksum into the
+manifest: `npm pack` is not byte-reproducible, so a hand-written hash goes
+stale the moment CI rebuilds the tarball, and replacing a published asset would
+invalidate the checksum every installed client already trusts.
+
+Note that `raw.githubusercontent.com` caches for five minutes, so a new release
+can take that long to become visible to installers.
+
+### npm registry credentials
+
+The first registry publish needs an `NPM_TOKEN` repository secret, because a
+trusted publisher can only be configured against a package that already exists.
 
 Afterwards, configure trusted publishing on npmjs.com under Settings →
 Trusted publishing for the `githubrelay` package, pointing at this repository
 and the `publish-npm.yml` workflow. The workflow already requests
-`id-token: write`, so OIDC takes over and `NPM_TOKEN` can be deleted. Trusted
-publishing also attaches provenance automatically.
+`id-token: write`, so OIDC takes over. Set the `NPM_TRUSTED_PUBLISHING`
+repository variable to `true` and delete `NPM_TOKEN`. Trusted publishing also
+attaches provenance automatically.
