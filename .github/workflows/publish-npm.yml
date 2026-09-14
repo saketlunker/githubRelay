@@ -176,8 +176,6 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
-        env:
-          GH_TOKEN: ${{ github.token }}
 
       - name: Dry run summary
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run
