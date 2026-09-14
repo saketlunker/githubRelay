@@ -1,20 +1,53 @@
 # GitHub Model Relay
 
-Source for the cross-platform **GitHub Model Relay** desktop app and
-its headless Windows gateway. It lets Claude Code, Codex CLI, OpenCode, Pi,
-and compatible OpenAI/Anthropic clients use models available through a user's
-GitHub Copilot subscription without running VS Code.
+Use the models in your own **GitHub Copilot subscription** from Claude Code,
+Codex, OpenCode, and Pi — as a local API on `127.0.0.1`, with no VS Code.
 
 > **Unofficial community tool.** This project is not affiliated with or
 > endorsed by GitHub.
 
+## Install
+
+Windows 10 or 11. Open PowerShell and run one line.
+
+**If you have Node.js 22.13 or newer:**
+
+```powershell
+npm install -g githubrelay@latest && githubrelay setup
+```
+
+**If npm is blocked on your network, or you have no Node.js:**
+
+```powershell
+irm https://raw.githubusercontent.com/saketlunker/githubRelay/main/web-install.ps1 | iex
+```
+
+The second line installs Node.js through winget when it is missing, and falls
+back to the GitHub release when the npm registry is unreachable — which is the
+case on networks that cannot reach `registry.npmjs.org`. It works everywhere
+the first line works, so it is the safer one to share.
+
+`setup` checks prerequisites, installs the gateway, signs you in to GitHub
+(the device code is copied to your clipboard and the page opens), starts the
+relay, and points your coding agents at it. Then open a new terminal and run
+`claude` or `codex`.
+
+If anything looks wrong:
+
+```powershell
+githubrelay doctor
+```
+
+That prints a report with secrets redacted, suitable for sharing as-is.
+
 > [!CAUTION]
 > This project uses an unofficial, reverse-engineered Copilot backend. It may
 > stop working without notice, and automated use can trigger GitHub abuse
-> controls or suspension. Use it only for your own interactive development,
-> keep the conservative limits enabled, and review the GitHub Copilot terms
-> and Acceptable Use Policies. This software does not bypass quotas and does
-> not implement account rotation, bulk automation, or resale features.
+> controls or suspension of your GitHub account. Use it only for your own
+> interactive development, keep the conservative limits enabled, and review
+> the GitHub Copilot terms and Acceptable Use Policies. This software does not
+> bypass quotas and does not implement account rotation, bulk automation, or
+> resale features.
 
 The wrapper installs exactly pinned
 [`@jeffreycao/copilot-api@2.0.1`](https://github.com/caozhiyuan/copilot-api)
@@ -24,19 +57,19 @@ protocol translation.
 
 ## What it provides
 
-- An Electron tray application for Windows, macOS, and Linux that bundles
-  Electron/Node and the pinned gateway backend.
-- A native settings window for authentication, status, dynamic models and
-  reasoning controls, clients, signed updates, and diagnostics.
-- Public update metadata and signed installers are published as GitHub
-  Releases on this same repository.
-- One-command, per-user Windows 10/11 installation from a cloned checkout.
-- No administrator requirement under normal Task Scheduler policy.
-- No VS Code process or VS Code installation.
+Shipping today, through the npm launcher:
+
+- A headless Windows gateway exposing loopback-only OpenAI and
+  Anthropic-compatible APIs backed by your Copilot subscription.
 - One-time GitHub device authentication persisted in a dedicated data
   directory.
 - Automatic hidden startup at user logon through a least-privilege Scheduled
-  Task.
+  Task, plus a repeating watchdog that revives the gateway if it stops.
+- Automatic updates: the launcher updates itself and brings the installed
+  gateway to the same version.
+- Lossless, backed-up client configuration for Claude Code, Codex, OpenCode,
+  and Pi, including repairing an agent whose command npm failed to link.
+- A redacted diagnostic report (`githubrelay doctor`) for support.
 - A singleton supervisor with bounded exponential restart backoff.
 - A public listener fixed to `127.0.0.1`; LAN binding is rejected.
 - Separate public, internal-backend, and admin API keys generated from the
@@ -46,14 +79,19 @@ protocol translation.
   conservative concurrency/rate limits without inspecting prompt bodies.
 - Atomic state writes, immutable releases, exact updates, and pointer-based
   rollback.
-- Lossless, backed-up user configuration for Claude Code, Codex, OpenCode,
-  and Pi.
 - Dynamic model discovery from `/v1/models`, cached aliases, and explicit
   model selection.
 - Structured, rotated wrapper logs that omit request bodies and redact known
   credentials.
 - Fully offline product tests after dependency restore; CI never authenticates
   or contacts Copilot.
+
+In the source tree but **not released**:
+
+- An Electron tray application for Windows, macOS, and Linux. It builds and is
+  covered by CI, but no signed release is published and its release workflow
+  requires signing credentials that are not configured. Only the Windows
+  gateway above is shipped today.
 
 ## Architecture
 
@@ -227,37 +265,22 @@ reaches you without you knowing an update existed.
 returns to the previous gateway release. Set
 `GITHUBRELAY_DISABLE_AUTO_UPDATE=1` to turn automatic updates off.
 
-## Install
+## Installing from a checkout
 
-Open PowerShell and run:
+The one-line installers at the top of this file are what users should run.
+This section covers working from a clone instead.
 
-```powershell
-npm install -g githubrelay@latest
-githubrelay setup
-```
-
-`setup` checks prerequisites, installs the gateway, runs GitHub device
-sign-in, starts the relay, and then configures Claude Code / Codex / OpenCode /
-Pi. Client configuration runs after start because it discovers the model list
-from the loopback endpoint. Sign-in needs a console, so it is an explicit step
-rather than an `npm` lifecycle script; npm 12 blocks dependency lifecycle
-scripts by default in any case.
-
-On a machine without Node.js, this one line installs Node through winget first
-and then does the same thing:
-
-```powershell
-irm https://raw.githubusercontent.com/saketlunker/githubRelay/main/web-install.ps1 | iex
-```
-
-If anything misbehaves, `githubrelay doctor` prints a redacted report suitable
-for sharing.
+Notes that apply to both paths: client configuration runs after the gateway
+starts, because it discovers the model list from the loopback endpoint.
+Sign-in needs a console, so it is an explicit step rather than an `npm`
+lifecycle script; npm 12 blocks dependency lifecycle scripts by default in any
+case.
 
 See [`packages/npm`](packages/npm) for the launcher and
 [`docs/release-feed.md`](docs/release-feed.md) for the release channel.
 
-To work from a checkout instead, clone this repository, open PowerShell in it,
-and run:
+To work from a checkout, clone this repository, open PowerShell in it, and
+run:
 
 ```powershell
 .\install.ps1
@@ -786,6 +809,12 @@ or Task Scheduler crash recovery.
 
 ## Known limitations
 
+- **Windows only.** The shipped installers support Windows 10 and 11. macOS
+  and Linux are rejected with a clear message rather than failing partway.
+- **Rate limited on purpose.** The gateway defaults to 20 requests per minute
+  and 2 concurrent requests. Agentic coding tools issue bursts and can hit
+  this; it is a deliberate abuse-control safeguard, not a fault. Raise it in
+  `config/gateway.json` only if you understand the risk to your account.
 - The backend is unofficial and can break when GitHub changes internal APIs or
   abuse controls.
 - GitHub's short-lived Copilot token is refreshed automatically, but the
