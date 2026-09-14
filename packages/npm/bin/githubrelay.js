@@ -5,6 +5,7 @@ import { PACKAGE_NAME, PRODUCT_NAME, packageVersion, runGateway, runGatewayWatch
 import { buildDoctorReport } from "../lib/doctor.mjs";
 import { createDeviceLoginWatcher } from "../lib/device-login.mjs";
 import { createDesktopShortcut } from "../lib/shortcut.mjs";
+import { ensureGatewayCurrent } from "../lib/gateway-sync.mjs";
 import { formatPreflight, runPreflight } from "../lib/preflight.mjs";
 import { checkForUpdate } from "../lib/update.mjs";
 
@@ -147,6 +148,15 @@ async function main() {
   }
 
   await checkForUpdate();
+
+  // The launcher updates itself from npm, but the gateway is a separate
+  // release on disk. Bringing it along automatically is the whole point of
+  // shipping a fix: a user should not have to know an update exists.
+  // Excluded are commands that report state or deliberately change it, which
+  // must not have the gateway swapped underneath them.
+  if (!["doctor", "uninstall", "update", "rollback", "stop", "shortcut", "setup"].includes(command)) {
+    ensureGatewayCurrent();
+  }
 
   switch (command) {
     case "setup":

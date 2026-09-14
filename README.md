@@ -214,8 +214,13 @@ no command at all. `doctor` tells those apart and gives the matching remedy:
 
 ### Updating
 
-The launcher checks for a newer release at startup and updates itself. To move
-the gateway to the newest release, run `githubrelay update`.
+Updates are automatic. The launcher checks for a newer release at startup and
+installs it, then brings the gateway up to the same version. A shipped fix
+reaches you without you knowing an update existed.
+
+`githubrelay update` still exists to force it, and `githubrelay rollback`
+returns to the previous gateway release. Set
+`GITHUBRELAY_DISABLE_AUTO_UPDATE=1` to turn automatic updates off.
 
 ## Install
 

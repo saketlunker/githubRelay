@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { PACKAGE_NAME, PRODUCT_NAME, isWindows, packageVersion, runGateway, runGatewayJson } from "./environment.mjs";
 import { formatAgents, inspectAgents } from "./agents.mjs";
+import { parseGatewayVersion } from "./gateway-sync.mjs";
 import { formatPreflight, runPreflight } from "./preflight.mjs";
 
 const SECRET_KEY_PATTERN = /(key|secret|token|password|authorization|credential|cookie)/i;
@@ -70,12 +71,18 @@ export function buildDoctorReport({ tail = 60 } = {}) {
   const preflight = runPreflight();
   const sections = [];
 
+  const gatewayStatus = preflight.ok ? runGatewayJson("status") : { ok: false };
+  const gatewayRelease = gatewayStatus.ok
+    ? (parseGatewayVersion(gatewayStatus.value?.ActiveRelease) ?? "unknown")
+    : "not installed";
+
   sections.push(
     [
       `# ${PRODUCT_NAME} diagnostics`,
       "",
       `generated: ${new Date().toISOString()}`,
       `package:   ${PACKAGE_NAME}@${packageVersion()}`,
+      `gateway:   ${gatewayRelease}`,
       `node:      ${process.version}`,
       `npm:       ${commandVersion("npm", ["--version"])}`,
       `platform:  ${process.platform}-${process.arch}`,
@@ -85,7 +92,9 @@ export function buildDoctorReport({ tail = 60 } = {}) {
   sections.push(["## Preflight", "", formatPreflight(preflight)].join("\n"));
 
   if (preflight.ok) {
-    const status = runGatewayJson("status");
+    // Reuses the status already fetched for the header rather than spawning
+    // PowerShell a second time.
+    const status = gatewayStatus;
     const notInstalled = !status.ok && NOT_INSTALLED_PATTERN.test(status.error ?? "");
 
     if (notInstalled) {

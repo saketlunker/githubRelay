@@ -94,8 +94,12 @@ githubrelay doctor --out relay-report.md
 
 ## Updating
 
-The launcher checks for a newer release on startup and updates itself. To
-disable that:
+Updates are automatic. The launcher checks for a newer release on startup and
+installs it, then brings the installed gateway up to the same version. The
+gateway check costs one process spawn, so it runs once per launcher version
+rather than on every command.
+
+To disable automatic updates:
 
 ```
 set GITHUBRELAY_DISABLE_AUTO_UPDATE=1
