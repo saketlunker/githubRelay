@@ -125,8 +125,31 @@ function Install-Launcher {
     Update-PathFromEnvironment
 }
 
+function Invoke-WithRetries {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$Action,
+        [int]$Attempts = 4,
+        [string]$What = 'request'
+    )
+
+    # Corporate proxies in front of GitHub return intermittent 504s, so one
+    # transient failure must not fail the whole install.
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            return & $Action
+        }
+        catch {
+            if ($attempt -eq $Attempts) { throw }
+            Write-Warn "$What failed (attempt $attempt): $($_.Exception.Message.Split([Environment]::NewLine)[0])"
+            Start-Sleep -Seconds (1.5 * $attempt)
+        }
+    }
+}
+
 function Install-FromRelease {
-    $manifest = Invoke-RestMethod -Uri $ManifestUrl -TimeoutSec 30
+    $manifest = Invoke-WithRetries -What 'Reading the release manifest' -Action {
+        Invoke-RestMethod -Uri $ManifestUrl -TimeoutSec 30
+    }
     $tarballUrl = $manifest.fallback.tarball
     if (-not $tarballUrl) {
         throw 'npm could not reach the registry and the release manifest publishes no fallback tarball.'
@@ -137,10 +160,14 @@ function Install-FromRelease {
     try {
         $archive = Join-Path $workspace (Split-Path -Leaf $tarballUrl)
         Write-Ok "Downloading $tarballUrl"
-        Invoke-WebRequest -Uri $tarballUrl -OutFile $archive -TimeoutSec 300 -UseBasicParsing
+        Invoke-WithRetries -What 'Download' -Action {
+            Invoke-WebRequest -Uri $tarballUrl -OutFile $archive -TimeoutSec 300 -UseBasicParsing
+        }
 
         if ($manifest.fallback.PSObject.Properties['sha256Url']) {
-            $published = Invoke-RestMethod -Uri $manifest.fallback.sha256Url -TimeoutSec 30
+            $published = Invoke-WithRetries -What 'Checksum fetch' -Action {
+                Invoke-RestMethod -Uri $manifest.fallback.sha256Url -TimeoutSec 30
+            }
             $expected = [regex]::Match([string]$published, '[A-Fa-f0-9]{64}')
             if ($expected.Success) {
                 $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()

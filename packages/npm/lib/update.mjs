@@ -16,6 +16,30 @@ import {
 
 const MAX_REDIRECTS = 5;
 const TIMEOUT_MS = 10_000;
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+// Corporate proxies in front of GitHub return intermittent 504s, so a single
+// transient failure must not abandon an otherwise valid update.
+const RETRY_ATTEMPTS = 4;
+const RETRY_DELAY_MS = 1_500;
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function withRetries(operation, { attempts = RETRY_ATTEMPTS, onRetry } = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) break;
+      onRetry?.(attempt, error);
+      await delay(RETRY_DELAY_MS * attempt);
+    }
+  }
+  throw lastError;
+}
 
 function truthy(value) {
   if (!value) return false;
@@ -41,6 +65,9 @@ function fetchText(url, redirectsRemaining = MAX_REDIRECTS) {
           reject(new Error(`too many redirects for ${url}`));
           return;
         }
+        // Disarm this hop's timer before following the redirect; otherwise it
+        // fires later and rejects a chain that has already succeeded.
+        request.setTimeout(0);
         fetchText(new URL(response.headers.location, url).toString(), redirectsRemaining - 1).then(resolve, reject);
         return;
       }
@@ -91,6 +118,8 @@ function downloadTo(url, destination) {
         if (status >= 300 && status < 400 && response.headers.location) {
           response.resume();
           if (redirectsRemaining <= 0) return reject(new Error(`too many redirects for ${url}`));
+          // Disarm this hop's timer before following the redirect.
+          request.setTimeout(0);
           return step(new URL(response.headers.location, target).toString(), redirectsRemaining - 1);
         }
         if (status !== 200) {
@@ -102,7 +131,7 @@ function downloadTo(url, destination) {
         file.on("finish", () => file.close(() => resolve()));
         file.on("error", reject);
       });
-      request.setTimeout(120_000, () => request.destroy(new Error(`timed out fetching ${target}`)));
+      request.setTimeout(DOWNLOAD_TIMEOUT_MS, () => request.destroy(new Error(`timed out fetching ${target}`)));
       request.on("error", reject);
     };
     step(url, MAX_REDIRECTS);
@@ -122,10 +151,14 @@ async function reinstallFromTarball(fallback, version) {
   try {
     const archive = join(workspace, `${PACKAGE_NAME}-${version}.tgz`);
     console.error("Registry unavailable; falling back to the GitHub release.");
-    await downloadTo(url, archive);
+
+    const notify = (attempt, error) =>
+      console.error(`  attempt ${attempt} failed (${error instanceof Error ? error.message : error}); retrying...`);
+
+    await withRetries(() => downloadTo(url, archive), { onRetry: notify });
 
     if (typeof fallback.sha256Url === "string" && /^https:\/\//.test(fallback.sha256Url)) {
-      const published = await fetchText(fallback.sha256Url);
+      const published = await withRetries(() => fetchText(fallback.sha256Url), { onRetry: notify });
       const expected = /[A-Fa-f0-9]{64}/.exec(published)?.[0];
       const actual = createHash("sha256").update(readFileSync(archive)).digest("hex");
       if (expected && expected.toLowerCase() !== actual) {
@@ -148,7 +181,7 @@ async function reinstall(manifest, version) {
   return reinstallFromTarball(manifest?.fallback, version);
 }
 
-export { installSpec };
+export { installSpec, withRetries };
 
 /**
  * Returns true when the process was replaced by a newer launcher and the caller
