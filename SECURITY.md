@@ -72,10 +72,10 @@ or revoke Copilot access when activity triggers abuse controls.
 
 ## Reporting
 
-Because this is a private repository, report suspected vulnerabilities through
-the repository's private security reporting channel or directly to its owner.
-Do not include live credentials, prompts, source code from logs, or OAuth
-tokens in an issue.
+Report suspected vulnerabilities privately through GitHub's private
+vulnerability reporting on this repository, or directly to its owner. Do not
+open a public issue for a security problem, and do not include live
+credentials, prompts, source code from logs, or OAuth tokens in a report.
 
 Vulnerabilities in `@jeffreycao/copilot-api` should also be reported to that
 upstream maintainer without disclosing this installation's secrets.
