@@ -59,14 +59,29 @@ export async function fetchManifest() {
   return JSON.parse(await fetchText(MANIFEST_URL));
 }
 
-function reinstall(version) {
-  const spec = `${PACKAGE_NAME}@${version}`;
+/**
+ * Resolves what to hand `npm install -g`. A manifest may point at a tarball on
+ * GitHub Releases, which lets the launcher ship and self-update before the
+ * package exists on the npm registry.
+ */
+function installSpec(manifest, version) {
+  const tarball = manifest?.dist?.tarball;
+  if (typeof tarball === "string" && /^https:\/\//.test(tarball)) {
+    return tarball;
+  }
+  return `${PACKAGE_NAME}@${version}`;
+}
+
+function reinstall(manifest, version) {
+  const spec = installSpec(manifest, version);
   console.error(`Updating ${PRODUCT_NAME} to ${version}...`);
   const result = isWindows()
     ? spawnSync("cmd.exe", ["/d", "/s", "/c", "npm", "install", "-g", "--force", spec], { stdio: "inherit" })
     : spawnSync("npm", ["install", "-g", "--force", spec], { stdio: "inherit" });
   return !result.error && result.status === 0;
 }
+
+export { installSpec };
 
 /**
  * Returns true when the process was replaced by a newer launcher and the caller
@@ -92,7 +107,7 @@ export async function checkForUpdate({ quiet = true } = {}) {
   const strategy = manifest?.bootstrap?.strategy;
   if (strategy !== "package-reinstall") return false;
 
-  if (!reinstall(manifest.version)) {
+  if (!reinstall(manifest, manifest.version)) {
     console.error("Warning: update failed. Continuing with the installed version.");
     return false;
   }

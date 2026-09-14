@@ -3,10 +3,13 @@
   "channel": "prod",
   "version": "0.2.2",
   "publishedAt": "2026-09-14T00:00:00Z",
-  "notesUrl": "https://github.com/saketlunker/githubRelay/releases",
+  "notesUrl": "https://github.com/saketlunker/githubRelay/releases/tag/npm-v0.2.2",
   "sourceRepository": "saketlunker/githubRelay",
+  "dist": {
+    "tarball": "https://github.com/saketlunker/githubRelay/releases/download/npm-v0.2.2/githubrelay-0.2.2.tgz"
+  },
   "install": {
-    "npm": "npm install -g githubrelay"
+    "npm": "npm install -g https://github.com/saketlunker/githubRelay/releases/download/npm-v0.2.2/githubrelay-0.2.2.tgz"
   },
   "bootstrap": {
     "strategy": "package-reinstall"
