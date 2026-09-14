@@ -1,0 +1,131 @@
+name: Publish npm launcher
+
+# Publishing runs here rather than from a maintainer's machine: GitHub-hosted
+# runners reach registry.npmjs.org directly, and trusted publishing (OIDC) is
+# only supported on cloud-hosted runners.
+
+on:
+  push:
+    tags:
+      - "npm-v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Pack and validate without publishing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.13.0
+          cache: npm
+
+      - name: Restore exact dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run Node tests
+        run: npm run test:gateway
+
+      - name: Run launcher tests
+        run: npm run test:npm
+
+      - name: Run PowerShell tests
+        shell: pwsh
+        run: ./tests/powershell/run-tests.ps1
+
+  publish:
+    name: Publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required for trusted publishing and for provenance attestations.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Use an npm that supports trusted publishing
+        run: npm install -g npm@latest
+
+      - name: Restore exact dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Check version consistency
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./packages/npm/package.json').version")"
+          manifest_version="$(node -p "require('./releases/prod/latest.json').version")"
+
+          if [[ "$package_version" != "$manifest_version" ]]; then
+            echo "packages/npm is $package_version but releases/prod/latest.json is $manifest_version" >&2
+            echo "A manifest ahead of the package makes every launcher try to update forever." >&2
+            exit 1
+          fi
+
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            tag_version="${GITHUB_REF_NAME#npm-v}"
+            if [[ "$tag_version" != "$package_version" ]]; then
+              echo "tag $GITHUB_REF_NAME does not match package version $package_version" >&2
+              exit 1
+            fi
+          fi
+
+          echo "Publishing version $package_version"
+
+      - name: Build and inspect the tarball
+        working-directory: packages/npm
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm pack --quiet
+          tarball="$(ls -1 *.tgz | head -n 1)"
+
+          # Listed to a file on purpose: piping into `grep -q` under
+          # `pipefail` makes tar fail with SIGPIPE once grep exits early.
+          tar -tf "$tarball" > tarball-entries.txt
+
+          # prepack stages the payload; publishing without it ships a launcher
+          # that cannot install anything.
+          for required in \
+            package/payload/gateway.ps1 \
+            package/payload/powershell/CopilotHarnessGateway.psm1 \
+            package/payload/package-lock.json \
+            package/bin/githubrelay.js
+          do
+            if ! grep -Fxq "$required" tarball-entries.txt; then
+              echo "tarball is missing $required" >&2
+              exit 1
+            fi
+          done
+
+          echo "Tarball contents verified: $tarball"
+          rm -f "$tarball" tarball-entries.txt
+
+      - name: Publish
+        if: github.event_name == 'push' || inputs.dry_run == false
+        working-directory: packages/npm
+        run: npm publish --provenance
+        env:
+          # Ignored once trusted publishing is configured on npmjs.com, which
+          # is the preferred path. Needed for the very first publish, because a
+          # trusted publisher can only be configured on an existing package.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Dry run summary
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        run: echo "Dry run only. Re-run with dry_run=false, or push an npm-v* tag, to publish."

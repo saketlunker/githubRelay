@@ -19,6 +19,10 @@
   "engines": {
     "node": ">=22.13.0"
   },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
   "keywords": [
     "copilot",
     "claude-code",

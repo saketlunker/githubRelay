@@ -59,6 +59,25 @@ test("install carries no lifecycle scripts", () => {
   }
 });
 
+test("publishing is pinned to the public npm registry", () => {
+  const npmPackage = readJson(join(packageRoot, "package.json"));
+
+  // Without this, `npm publish` follows whatever registry the machine is
+  // configured for, which on a corporate laptop is an internal mirror.
+  assert.equal(npmPackage.publishConfig.registry, "https://registry.npmjs.org");
+  assert.equal(npmPackage.publishConfig.access, "public");
+});
+
+test("repository url matches the GitHub repo trusted publishing expects", () => {
+  const npmPackage = readJson(join(packageRoot, "package.json"));
+
+  assert.equal(
+    npmPackage.repository.url,
+    "git+https://github.com/saketlunker/githubRelay.git",
+    "npm rejects OIDC publishing when repository.url does not match the source repo",
+  );
+});
+
 test("repository pins the backend to an exact version", () => {
   const rootPackage = readJson(join(repositoryRoot, "package.json"));
   assert.match(rootPackage.dependencies["@jeffreycao/copilot-api"], /^\d+\.\d+\.\d+$/);
