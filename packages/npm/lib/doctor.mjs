@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { PACKAGE_NAME, PRODUCT_NAME, isWindows, packageVersion, runGateway, runGatewayJson } from "./environment.mjs";
+import { formatAgents, inspectAgents } from "./agents.mjs";
 import { formatPreflight, runPreflight } from "./preflight.mjs";
 
 const SECRET_KEY_PATTERN = /(key|secret|token|password|authorization|credential|cookie)/i;
@@ -55,19 +56,7 @@ function commandVersion(command, args) {
 }
 
 function detectClients() {
-  const home = homedir();
-  const candidates = {
-    "Claude Code": [join(home, ".claude", "settings.json"), join(home, ".claude.json")],
-    Codex: [join(home, ".codex", "config.toml")],
-    OpenCode: [join(home, ".config", "opencode", "opencode.json")],
-    Pi: [join(home, ".pi", "settings.json")],
-  };
-  const detected = {};
-  for (const [name, paths] of Object.entries(candidates)) {
-    const found = paths.find((path) => existsSync(path));
-    detected[name] = found ? "configured file present" : "not detected";
-  }
-  return detected;
+  return formatAgents(inspectAgents());
 }
 
 function readLogs(tail) {
@@ -127,9 +116,7 @@ export function buildDoctorReport({ tail = 60 } = {}) {
     );
   }
 
-  sections.push(
-    ["## Detected clients", "", "```json", JSON.stringify(detectClients(), null, 2), "```"].join("\n"),
-  );
+  sections.push(["## Coding agents", "", detectClients()].join("\n"));
 
   sections.push(
     [

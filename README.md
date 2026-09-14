@@ -131,6 +131,87 @@ SQLite usage store and is this project's tested minimum.
 Pi additionally needs Bash on Windows, normally Git Bash, and the maintained
 package is `@earendil-works/pi-coding-agent`.
 
+## How you use it
+
+### First time, once
+
+Open PowerShell and run one line:
+
+```powershell
+npm install -g githubrelay@latest
+githubrelay setup
+```
+
+On a machine with no Node.js, use this instead — it installs Node through
+winget first, then does the same thing:
+
+```powershell
+irm https://raw.githubusercontent.com/saketlunker/githubRelay/main/web-install.ps1 | iex
+```
+
+`setup` runs five steps and takes about a minute:
+
+1. Checks prerequisites.
+2. Installs the gateway.
+3. Signs you in to GitHub. A device code is copied to your clipboard and the
+   verification page opens; paste and confirm.
+4. Starts the gateway.
+5. Points your coding agents at it.
+
+Then open a new terminal and run `claude` or `codex`. There is nothing to
+configure, no API key to paste, and no second account to create.
+
+### Day to day
+
+Nothing. The gateway starts when you sign in to Windows, through a
+least-privilege scheduled task, and your agents already point at it.
+
+Useful when you want it:
+
+| Command | When |
+| --- | --- |
+| `githubrelay status` | Is it running? |
+| `githubrelay models` | What models can I use? |
+| `githubrelay doctor` | Something is wrong and I want to report it |
+| `githubrelay stop` / `start` | Pause or resume the relay |
+
+### After installing a new coding agent
+
+A newly installed agent does not know about the relay yet. Re-link it:
+
+```powershell
+githubrelay clients
+```
+
+Or double-click the desktop shortcut **Connect coding agents to GitHub Relay**,
+which does exactly that. This is the only recurring step in normal use.
+
+### When something looks wrong
+
+```powershell
+githubrelay doctor
+```
+
+It prints prerequisites, gateway status and health, recent logs, and the state
+of each coding agent, with secrets redacted and your home directory shortened.
+Share the output as-is.
+
+It also catches a failure that is easy to misread. npm 12 blocks dependency
+lifecycle scripts by default, and both Claude Code and Codex use `postinstall`
+to place their native binary, so `npm install -g` can report success and leave
+a command that cannot run. `doctor` reports that directly:
+
+```text
+  Codex: installed but broken
+      the codex command was never linked, which happens when npm blocks postinstall scripts
+      fix: npm install -g @openai/codex --allow-scripts=@openai/codex
+```
+
+### Updating
+
+The launcher checks for a newer release at startup and updates itself. To move
+the gateway to the newest release, run `githubrelay update`.
+
 ## Install
 
 Open PowerShell and run:
@@ -141,10 +222,11 @@ githubrelay setup
 ```
 
 `setup` checks prerequisites, installs the gateway, runs GitHub device
-sign-in, configures Claude Code / Codex / OpenCode / Pi, and starts the relay.
-Sign-in needs a console, so it is an explicit step rather than an `npm`
-lifecycle script; npm 12 blocks dependency lifecycle scripts by default in any
-case.
+sign-in, starts the relay, and then configures Claude Code / Codex / OpenCode /
+Pi. Client configuration runs after start because it discovers the model list
+from the loopback endpoint. Sign-in needs a console, so it is an explicit step
+rather than an `npm` lifecycle script; npm 12 blocks dependency lifecycle
+scripts by default in any case.
 
 On a machine without Node.js, this one line installs Node through winget first
 and then does the same thing:

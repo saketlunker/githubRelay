@@ -44,9 +44,20 @@ extension. The relay performs its own device sign-in.
 | `githubrelay logs -Tail 200` | Show recent logs |
 | `githubrelay models` | List or refresh available models |
 | `githubrelay start` / `stop` / `restart` | Control the gateway |
-| `githubrelay clients` | Re-apply client configuration |
+| `githubrelay clients` | Re-link coding agents to the relay |
+| `githubrelay shortcut` | Recreate the desktop re-link shortcut |
 | `githubrelay auth` | Re-run GitHub sign-in |
 | `githubrelay doctor` | Print a redacted report for support |
+
+## Day to day
+
+Nothing to do. The gateway starts when you sign in to Windows through a
+least-privilege scheduled task, and your agents are already pointed at it.
+
+The one recurring step: after installing a **new** coding agent, run
+`githubrelay clients` — or double-click the desktop shortcut
+**Connect coding agents to GitHub Relay** — so that agent learns about the
+relay.
 
 ## When something breaks
 
@@ -54,11 +65,22 @@ extension. The relay performs its own device sign-in.
 githubrelay doctor
 ```
 
-This prints prerequisites, gateway status and health, recent logs, and which
-clients were detected. Secrets are redacted before the report is produced, and
-your home directory is shortened to `~`. Review it once, then share it.
+This prints prerequisites, gateway status and health, recent logs, and the
+state of each coding agent. Secrets are redacted before the report is produced
+and your home directory is shortened to `~`. Review it once, then share it.
 
-To write it to a file instead:
+It also catches a confusing failure mode. npm 12 blocks dependency lifecycle
+scripts by default, and both Claude Code and Codex place their native binary in
+`postinstall`, so `npm install -g` can report success and still leave a command
+that cannot run:
+
+```text
+  Codex: installed but broken
+      the codex command was never linked, which happens when npm blocks postinstall scripts
+      fix: npm install -g @openai/codex --allow-scripts=@openai/codex
+```
+
+To write the report to a file instead:
 
 ```
 githubrelay doctor --out relay-report.md
