@@ -4,6 +4,7 @@ import { writeFileSync } from "node:fs";
 import { PACKAGE_NAME, PRODUCT_NAME, packageVersion, runGateway, runGatewayWatched } from "../lib/environment.mjs";
 import { buildDoctorReport } from "../lib/doctor.mjs";
 import { createDeviceLoginWatcher } from "../lib/device-login.mjs";
+import { createDesktopShortcut } from "../lib/shortcut.mjs";
 import { formatPreflight, runPreflight } from "../lib/preflight.mjs";
 import { checkForUpdate } from "../lib/update.mjs";
 
@@ -24,6 +25,7 @@ Everyday use
 Maintenance
   auth               Re-run GitHub device sign-in
   clients            Re-apply Claude Code / Codex / OpenCode / Pi configuration
+  shortcut           Recreate the desktop shortcut for re-linking agents
   update             Update the installed gateway release
   uninstall          Remove the gateway
   version            Print the installed version
@@ -97,13 +99,25 @@ async function setup(args) {
   }
 
   step(5, total, "Configuring your clients");
-  const clients = runGateway("configure-clients", ["-Clients", "all"]);
+  // -SetDefault also selects the relay as the active provider. Without it
+  // Codex keeps its own provider and calls api.openai.com, which fails with
+  // 401 even though the relay is running and configured.
+  const clients = runGateway("configure-clients", ["-Clients", "all", "-SetDefault"]);
   if (clients.error || clients.status !== 0) {
     console.error("Client configuration failed. Re-run with: githubrelay clients");
   }
 
+  const shortcut = createDesktopShortcut();
+
   console.log(`\n${PRODUCT_NAME} is ready.`);
-  console.log("Open a new terminal and run 'claude' to use it.");
+  console.log("It starts automatically when you sign in to Windows.");
+  console.log("\nOpen a new terminal and run 'claude' or 'codex' to use it.");
+  if (shortcut.ok) {
+    console.log("\nInstalled a coding agent later? Run the desktop shortcut");
+    console.log("'Connect coding agents to GitHub Relay', or: githubrelay clients");
+  } else {
+    console.log("\nInstalled a coding agent later? Run: githubrelay clients");
+  }
   console.log("If something looks wrong, run: githubrelay doctor");
   process.exit(0);
 }
@@ -150,7 +164,16 @@ async function main() {
     case "clients":
     case "configure-clients":
       requirePreflight();
-      return passThrough("configure-clients", args.length > 0 ? args : ["-Clients", "all"]);
+      return passThrough("configure-clients", args.length > 0 ? args : ["-Clients", "all", "-SetDefault"]);
+    case "shortcut": {
+      const created = createDesktopShortcut();
+      if (created.ok) {
+        console.log(`Created ${created.path}`);
+        process.exit(0);
+      }
+      fail(`Could not create the shortcut: ${created.reason}`);
+      return undefined;
+    }
     case "status":
     case "health":
     case "logs":
