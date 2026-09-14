@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { AGENTS, classifyAgent, formatAgents } from "../lib/agents.mjs";
 
 const claude = AGENTS.find((agent) => agent.command === "claude");
+const codex = AGENTS.find((agent) => agent.command === "codex");
 const pi = AGENTS.find((agent) => agent.command === "pi");
 
 test("a fully working agent reports ready", () => {
@@ -19,8 +20,8 @@ test("a fully working agent reports ready", () => {
 });
 
 test("a missing native binary is reported as broken with the exact fix", () => {
-  // What npm 12 actually produces: the package installs, postinstall is
-  // blocked, and the command exists but cannot run.
+  // What a blocked postinstall produces: the package installs, the command
+  // exists, and it cannot run because the binary was never placed.
   const result = classifyAgent(claude, {
     packageInstalled: true,
     shimPresent: true,
@@ -33,16 +34,21 @@ test("a missing native binary is reported as broken with the exact fix", () => {
   assert.equal(result.fix, "npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code");
 });
 
-test("a package with no linked command is reported as broken", () => {
-  const result = classifyAgent(claude, {
+test("a present binary with no linked command is a different problem", () => {
+  // Observed with @openai/codex@0.154.0-alpha.3-win32-x64, a platform build
+  // that declares no bin and no scripts. Recommending --allow-scripts here
+  // would send the user down a path that cannot work.
+  const result = classifyAgent(codex, {
     packageInstalled: true,
     shimPresent: false,
     binaryPresent: true,
+    binaryPath: "C:\\npm\\node_modules\\@openai\\codex\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe",
     configPresent: true,
   });
 
-  assert.equal(result.status, "installed but broken");
-  assert.match(result.fix, /--allow-scripts/);
+  assert.equal(result.status, "installed but not on PATH");
+  assert.match(result.detail, /codex\.exe/, "the working binary path must be shown");
+  assert.doesNotMatch(result.fix, /--allow-scripts/, "allow-scripts cannot fix a package with no scripts");
 });
 
 test("an installed agent without relay config is told to run clients", () => {

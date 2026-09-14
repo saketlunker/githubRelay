@@ -69,15 +69,21 @@ This prints prerequisites, gateway status and health, recent logs, and the
 state of each coding agent. Secrets are redacted before the report is produced
 and your home directory is shortened to `~`. Review it once, then share it.
 
-It also catches a confusing failure mode. npm 12 blocks dependency lifecycle
-scripts by default, and both Claude Code and Codex place their native binary in
+It also catches failures that are easy to misread. npm 12 blocks dependency
+lifecycle scripts by default, and Claude Code places its native binary in
 `postinstall`, so `npm install -g` can report success and still leave a command
-that cannot run:
+that cannot run. Separately, npm may resolve a platform-specific build that
+declares no command at all. Those need different fixes, so they are reported
+differently:
 
 ```text
-  Codex: installed but broken
-      the codex command was never linked, which happens when npm blocks postinstall scripts
-      fix: npm install -g @openai/codex --allow-scripts=@openai/codex
+  Claude Code: installed but broken
+      its native binary is missing, which is what a blocked postinstall script leaves behind
+      fix: npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code
+
+  Codex: installed but not on PATH
+      npm linked no codex command for this build; the binary itself is at ...\vendor\...\bin\codex.exe
+      fix: run it from that path, or reinstall with: npm install -g @openai/codex@latest
 ```
 
 To write the report to a file instead:

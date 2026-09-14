@@ -1,6 +1,6 @@
 {
   "name": "github-model-relay",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "description": "Unofficial GitHub Model Relay desktop app and headless gateway.",
   "type": "module",
