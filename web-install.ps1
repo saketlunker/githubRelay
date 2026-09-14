@@ -102,15 +102,26 @@ function Install-Launcher {
 
     # Routed through cmd.exe because npm on Windows is a shim that PowerShell
     # does not always invoke cleanly with forwarded arguments.
-    & cmd.exe /d /s /c "npm install -g $Package@latest" 2>&1 |
-        ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    # Output is captured rather than streamed: on a registry-blocked network
+    # this attempt fails noisily with red 404s, and showing those before a
+    # successful fallback makes a working install look broken.
+    $attempt = & cmd.exe /d /s /c "npm install -g $Package@latest" 2>&1
     if ($LASTEXITCODE -eq 0) {
+        $attempt | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
         Update-PathFromEnvironment
         return
     }
 
-    Write-Warn 'The npm registry is not reachable from this network. Falling back to the GitHub release.'
-    Install-FromRelease
+    Write-Warn 'npm registry unavailable on this network. Using the GitHub release instead.'
+    try {
+        Install-FromRelease
+    }
+    catch {
+        Write-Host ''
+        Write-Host '    The npm registry attempt reported:' -ForegroundColor DarkGray
+        $attempt | Select-Object -Last 6 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        throw
+    }
     Update-PathFromEnvironment
 }
 
