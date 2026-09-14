@@ -805,7 +805,20 @@ function New-CHGScheduledTaskDefinition {
     $arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -InstallRoot "{1}"' -f $Paths.StableLauncher, $Paths.Root
     $action = New-ScheduledTaskAction -Execute $powerShell -Argument $arguments -WorkingDirectory $Paths.Root
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity.Name
+
+    # Two triggers. The logon trigger starts the gateway at sign-in. The
+    # repeating trigger is a watchdog: a supervisor that died mid-session would
+    # otherwise stay dead until the next sign-in. Repetition attached to a
+    # logon trigger does not reliably schedule future runs, so the watchdog is
+    # a separate trigger. While the gateway is healthy the extra run is
+    # discarded by MultipleInstances IgnoreNew, so this costs nothing.
+    $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $identity.Name
+    $watchdogTrigger = New-ScheduledTaskTrigger `
+        -Once `
+        -At (Get-Date).AddMinutes(5) `
+        -RepetitionInterval (New-TimeSpan -Minutes 5)
+    $trigger = @($logonTrigger, $watchdogTrigger)
+
     $principal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet `
         -MultipleInstances IgnoreNew `

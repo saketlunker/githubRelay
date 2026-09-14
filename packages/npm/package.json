@@ -1,6 +1,6 @@
 {
   "name": "githubrelay",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "One-line installer for GitHub Model Relay. Turns your GitHub Copilot subscription into a local API for Claude Code, Codex, OpenCode, and Pi.",
   "type": "module",
   "bin": {
