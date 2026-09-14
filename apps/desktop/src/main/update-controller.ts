@@ -108,7 +108,7 @@ export class UpdateController extends EventEmitter {
   }
 
   private async release(): Promise<GithubRelease> {
-    const base = "https://api.github.com/repos/saketlunker/github-model-relay";
+    const base = "https://api.github.com/repos/saketlunker/githubRelay";
     const response = await fetch(
       this.channel === "stable"
         ? `${base}/releases/latest`

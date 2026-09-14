@@ -62,10 +62,9 @@ Environment variables:
 - `MODEL_RELAY_LINUX_SIGNING_KEY_ID`
 - `MODEL_RELAY_MANIFEST_KEY_ID`
 
-Environment secret:
-
-- `PUBLIC_RELEASES_TOKEN`: fine-grained token limited to Contents write on
-  `saketlunker/github-model-relay`, or replace it with a GitHub App token.
+Release publishing uses the workflow's built-in `GITHUB_TOKEN` with
+`contents: write`, because source and releases share one repository. No
+cross-repository publishing token is required.
 
 Repository variables:
 

@@ -1,8 +1,8 @@
 {
-  "name": "github-model-relay-code",
+  "name": "github-model-relay",
   "version": "0.2.2",
   "private": true,
-  "description": "Private source for the unofficial GitHub Model Relay desktop and headless gateway.",
+  "description": "Unofficial GitHub Model Relay desktop app and headless gateway.",
   "type": "module",
   "workspaces": [
     "apps/desktop"

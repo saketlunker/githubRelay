@@ -2,9 +2,7 @@
 
 Status: Implementation draft
 
-Private source: `saketlunker/github-model-relay-code`
-
-Public releases: `saketlunker/github-model-relay`
+Source and public releases: `saketlunker/githubRelay`
 
 Distribution label: **Unofficial community tool**
 
@@ -209,10 +207,10 @@ Windows can use the user environment store for the local key. macOS/Linux use
 an app-owned helper when supported and otherwise show explicit shell
 integration; arbitrary shell profiles are not silently rewritten.
 
-## Private-to-public release flow
+## Release flow
 
-Private source builds publish only verified artifacts to the public
-`saketlunker/github-model-relay` repository.
+Builds publish only verified artifacts to releases on the public
+`saketlunker/githubRelay` repository.
 
 1. Approved version tag runs all target tests.
 2. Build installers/updater metadata, SBOMs, and SHA-256 files.

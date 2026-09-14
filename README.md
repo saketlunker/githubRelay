@@ -1,6 +1,6 @@
 # GitHub Model Relay
 
-Private source for the cross-platform **GitHub Model Relay** desktop app and
+Source for the cross-platform **GitHub Model Relay** desktop app and
 its headless Windows gateway. It lets Claude Code, Codex CLI, OpenCode, Pi,
 and compatible OpenAI/Anthropic clients use models available through a user's
 GitHub Copilot subscription without running VS Code.
@@ -28,9 +28,8 @@ protocol translation.
   Electron/Node and the pinned gateway backend.
 - A native settings window for authentication, status, dynamic models and
   reasoning controls, clients, signed updates, and diagnostics.
-- Public update metadata and signed installers in
-  [`saketlunker/github-model-relay`](https://github.com/saketlunker/github-model-relay);
-  source remains private in this repository.
+- Public update metadata and signed installers are published as GitHub
+  Releases on this same repository.
 - One-command, per-user Windows 10/11 installation from a cloned checkout.
 - No administrator requirement under normal Task Scheduler policy.
 - No VS Code process or VS Code installation.
@@ -134,7 +133,7 @@ package is `@earendil-works/pi-coding-agent`.
 
 ## Install
 
-Clone the private repository, open PowerShell in the checkout, and run:
+Clone this repository, open PowerShell in the checkout, and run:
 
 ```powershell
 .\install.ps1

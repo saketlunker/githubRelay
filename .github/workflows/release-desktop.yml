@@ -73,7 +73,7 @@ jobs:
     environment: model-relay-production
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@v5
@@ -134,9 +134,9 @@ jobs:
           gh release create \
             "v${{ steps.release.outputs.version }}" \
             release-assets/* \
-            --repo saketlunker/github-model-relay \
+            --repo saketlunker/githubRelay \
             --title "GitHub Model Relay ${{ steps.release.outputs.version }}" \
             --notes "Unofficial community tool. See the signed release manifest." \
             $prerelease
         env:
-          GH_TOKEN: ${{ secrets.PUBLIC_RELEASES_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
