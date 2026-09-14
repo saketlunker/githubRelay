@@ -152,15 +152,30 @@ jobs:
           npm pack --quiet
           tarball="$(ls -1 *.tgz | head -n 1)"
 
+          # Published next to the artifact because `npm pack` is not
+          # byte-reproducible: a hash committed by hand goes stale the moment
+          # CI rebuilds the tarball.
+          sha256sum "$tarball" > "$tarball.sha256"
+
           if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --title "githubrelay ${GITHUB_REF_NAME#npm-v}" \
-              --notes "Install: \`npm install -g https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$tarball && githubrelay setup\`"
+              --notes "Install: \`irm https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/web-install.ps1 | iex\`"
           fi
 
-          gh release upload "$GITHUB_REF_NAME" "$tarball" --clobber --repo "$GITHUB_REPOSITORY"
-          echo "Attached $tarball to $GITHUB_REF_NAME"
+          existing="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+
+          # Releases are immutable: replacing a published tarball would
+          # invalidate the checksum every existing installer already trusts.
+          if [[ "$existing" == *"$tarball"* ]]; then
+            echo "$tarball is already published for $GITHUB_REF_NAME; leaving it unchanged."
+          else
+            gh release upload "$GITHUB_REF_NAME" "$tarball" "$tarball.sha256" --repo "$GITHUB_REPOSITORY"
+            echo "Attached $tarball and its checksum to $GITHUB_REF_NAME"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
         env:
           GH_TOKEN: ${{ github.token }}
 

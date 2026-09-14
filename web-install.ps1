@@ -100,13 +100,36 @@ function Get-Manifest {
     return $manifest
 }
 
+function Get-ExpectedChecksum {
+    param($Manifest)
+
+    # npm pack is not byte-reproducible, so a hash written by hand into the
+    # manifest drifts as soon as CI rebuilds the tarball. The authoritative
+    # checksum is published next to the artifact by the same workflow run.
+    if ($Manifest.dist.PSObject.Properties['sha256'] -and -not [string]::IsNullOrWhiteSpace($Manifest.dist.sha256)) {
+        return [string]$Manifest.dist.sha256
+    }
+
+    $checksumUrl = "$($Manifest.dist.tarball).sha256"
+    try {
+        $body = Invoke-RestMethod -Uri $checksumUrl -TimeoutSec 30
+    }
+    catch {
+        return ''
+    }
+    # Accepts either a bare hash or `<hash>  <filename>` as produced by sha256sum.
+    $match = [regex]::Match([string]$body, '[A-Fa-f0-9]{64}')
+    if ($match.Success) { return $match.Value }
+    return ''
+}
+
 function Save-Tarball {
     param([string]$Url, [string]$Destination, [string]$ExpectedSha256)
 
     Invoke-WebRequest -Uri $Url -OutFile $Destination -TimeoutSec 300 -UseBasicParsing
 
     if ([string]::IsNullOrWhiteSpace($ExpectedSha256)) {
-        Write-Warn 'Manifest published no checksum; skipping verification.'
+        Write-Warn 'No published checksum found; skipping verification.'
         return
     }
     $actual = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -194,7 +217,7 @@ try {
     Write-Step 'Downloading the launcher'
     $download = Join-Path ([IO.Path]::GetTempPath()) ("githubrelay-" + [Guid]::NewGuid().ToString('N') + '.tgz')
     try {
-        $sha = if ($manifest.dist.PSObject.Properties['sha256']) { [string]$manifest.dist.sha256 } else { '' }
+        $sha = Get-ExpectedChecksum -Manifest $manifest
         Save-Tarball -Url $manifest.dist.tarball -Destination $download -ExpectedSha256 $sha
 
         Write-Step 'Installing'
