@@ -186,6 +186,10 @@ githubrelay clients
 Or double-click the desktop shortcut **Connect coding agents to GitHub Relay**,
 which does exactly that. This is the only recurring step in normal use.
 
+It also repairs an agent that npm installed without a usable command: when a
+package ships a working binary but no linked command, the missing command is
+created so the agent is reachable at all.
+
 ### When something looks wrong
 
 ```powershell
@@ -199,8 +203,9 @@ Share the output as-is.
 It also catches failures that are easy to misread. npm 12 blocks dependency
 lifecycle scripts by default, and Claude Code places its native binary in
 `postinstall`, so `npm install -g` can report success and leave a command that
-cannot run. Separately, npm may resolve a platform-specific build that declares
-no command at all. `doctor` tells those apart and gives the matching remedy:
+cannot run. Separately, npm may resolve a platform-specific build that ships a
+working binary but no command at all — `githubrelay clients` repairs that case
+by linking the command itself:
 
 ```text
   Claude Code: installed but broken

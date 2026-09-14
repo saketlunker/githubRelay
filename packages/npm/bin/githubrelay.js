@@ -6,6 +6,7 @@ import { buildDoctorReport } from "../lib/doctor.mjs";
 import { createDeviceLoginWatcher } from "../lib/device-login.mjs";
 import { createDesktopShortcut } from "../lib/shortcut.mjs";
 import { ensureGatewayCurrent } from "../lib/gateway-sync.mjs";
+import { linkUnlinkedAgents } from "../lib/agents.mjs";
 import { formatPreflight, runPreflight } from "../lib/preflight.mjs";
 import { checkForUpdate } from "../lib/update.mjs";
 
@@ -100,6 +101,11 @@ async function setup(args) {
   }
 
   step(5, total, "Configuring your clients");
+  // An agent whose command npm never linked looks absent to client
+  // configuration, so link it first.
+  for (const entry of linkUnlinkedAgents()) {
+    console.log(`  linked ${entry.command}`);
+  }
   // -SetDefault also selects the relay as the active provider. Without it
   // Codex keeps its own provider and calls api.openai.com, which fails with
   // 401 even though the relay is running and configured.
@@ -174,6 +180,9 @@ async function main() {
     case "clients":
     case "configure-clients":
       requirePreflight();
+      for (const entry of linkUnlinkedAgents()) {
+        console.log(`linked ${entry.command} -> ${entry.path}`);
+      }
       return passThrough("configure-clients", args.length > 0 ? args : ["-Clients", "all", "-SetDefault"]);
     case "shortcut": {
       const created = createDesktopShortcut();
