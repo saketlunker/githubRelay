@@ -9,24 +9,22 @@ and Pi can talk to — without running VS Code.
 ## Install
 
 ```powershell
-irm https://raw.githubusercontent.com/saketlunker/githubRelay/main/web-install.ps1 | iex
+npm install -g githubrelay@latest
+githubrelay setup
 ```
-
-This downloads the launcher from GitHub Releases, verifies its published
-SHA-256, puts `githubrelay` on your PATH, and runs setup.
 
 `setup` walks through five steps: prerequisite checks, gateway install, GitHub
 device sign-in, client configuration, and start. Sign-in opens a browser and
 asks for a device code, so it runs as an explicit step rather than silently
-during install.
+during install. npm 12 blocks dependency lifecycle scripts by default, so no
+`postinstall` is used.
 
-### Why not `npm install -g`
+On a machine without Node.js, this installs Node through winget first and then
+does the same thing:
 
-npm 12 defaults to `allow-remote=none` and `allow-git=none`, so neither a
-release tarball URL nor a git spec can be installed through npm. Once this
-package is published to the npm registry, `npm install -g githubrelay` becomes
-available as a second option; the launcher already prefers the registry name
-when the release manifest omits a tarball.
+```powershell
+irm https://raw.githubusercontent.com/saketlunker/githubRelay/main/web-install.ps1 | iex
+```
 
 ## Requirements
 

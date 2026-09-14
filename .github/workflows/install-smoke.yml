@@ -1,0 +1,59 @@
+name: Install smoke test
+
+# Verifies the command shared with users actually works on a clean machine.
+# It installs from the public npm registry, so it exercises the published
+# package rather than anything in this checkout.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, so a broken publish is noticed without anyone re-running it.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: npm install -g githubrelay@latest
+    runs-on: windows-latest
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.13.0
+
+      - name: Install from the public registry
+        run: npm install -g githubrelay@latest
+
+      - name: Launcher reports its version
+        shell: pwsh
+        run: |
+          $version = githubrelay version
+          Write-Host $version
+          if ($version -notmatch '^githubrelay \d+\.\d+\.\d+$') {
+            throw "Unexpected version output: $version"
+          }
+
+      - name: Diagnostics run and report a clean preflight
+        shell: pwsh
+        run: |
+          $report = githubrelay doctor | Out-String
+          Write-Host $report
+
+          foreach ($required in @('Operating system', 'Node.js', 'PowerShell', 'Relay payload')) {
+            if ($report -notmatch [regex]::Escape("[ok] $required")) {
+              throw "Preflight did not pass for: $required"
+            }
+          }
+
+          # The gateway is not installed on a bare runner, so doctor must say so
+          # rather than surfacing a raw PowerShell exception.
+          if ($report -notmatch 'The gateway is not installed yet') {
+            throw 'doctor did not report the uninstalled gateway clearly.'
+          }
+
+      - name: Help output lists the setup command
+        shell: pwsh
+        run: |
+          $help = githubrelay help | Out-String
+          if ($help -notmatch 'setup') { throw 'help did not mention setup.' }

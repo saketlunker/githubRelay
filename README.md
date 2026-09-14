@@ -136,21 +136,25 @@ package is `@earendil-works/pi-coding-agent`.
 Open PowerShell and run:
 
 ```powershell
+npm install -g githubrelay@latest
+githubrelay setup
+```
+
+`setup` checks prerequisites, installs the gateway, runs GitHub device
+sign-in, configures Claude Code / Codex / OpenCode / Pi, and starts the relay.
+Sign-in needs a console, so it is an explicit step rather than an `npm`
+lifecycle script; npm 12 blocks dependency lifecycle scripts by default in any
+case.
+
+On a machine without Node.js, this one line installs Node through winget first
+and then does the same thing:
+
+```powershell
 irm https://raw.githubusercontent.com/saketlunker/githubRelay/main/web-install.ps1 | iex
 ```
 
-That checks prerequisites, downloads the launcher, verifies its checksum, puts
-`githubrelay` on your PATH, and runs setup: GitHub device sign-in, client
-configuration for Claude Code / Codex / OpenCode / Pi, and start.
-
-Node.js 22.13 or newer is the only prerequisite; the installer offers to
-install it through winget when it is missing or too old. If anything
-misbehaves, `githubrelay doctor` prints a redacted report suitable for
-sharing.
-
-The installer does not use npm to fetch the launcher. npm 12 defaults to
-`allow-remote=none` and `allow-git=none`, so a release tarball URL or a git
-spec cannot be handed to `npm install -g`.
+If anything misbehaves, `githubrelay doctor` prints a redacted report suitable
+for sharing.
 
 See [`packages/npm`](packages/npm) for the launcher and
 [`docs/release-feed.md`](docs/release-feed.md) for the release channel.

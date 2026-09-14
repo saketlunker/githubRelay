@@ -5,12 +5,9 @@
   "publishedAt": "2026-09-14T00:00:00Z",
   "notesUrl": "https://github.com/saketlunker/githubRelay/releases/tag/npm-v0.2.2",
   "sourceRepository": "saketlunker/githubRelay",
-  "dist": {
-    "tarball": "https://github.com/saketlunker/githubRelay/releases/download/npm-v0.2.2/githubrelay-0.2.2.tgz"
-  },
   "install": {
     "powershell": "irm https://raw.githubusercontent.com/saketlunker/githubRelay/main/web-install.ps1 | iex",
-    "npm": "npm install -g githubrelay"
+    "npm": "npm install -g githubrelay@latest"
   },
   "bootstrap": {
     "strategy": "package-reinstall"
