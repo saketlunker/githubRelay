@@ -7,3 +7,5 @@ apps/desktop/dist/
 apps/desktop/dist-packages/
 apps/desktop/.gateway-release/
 apps/desktop/.gateway-release.zip
+packages/npm/payload/
+packages/npm/*.tgz

@@ -11,8 +11,9 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "test": "npm run test:gateway && npm run test:desktop",
+    "test": "npm run test:gateway && npm run test:npm && npm run test:desktop",
     "test:gateway": "node --test --test-concurrency=1 tests/node/*.test.mjs",
+    "test:npm": "node --test packages/npm/tests/*.test.mjs",
     "test:runtime": "node --test --test-concurrency=1 tests/node/supervisor.test.mjs",
     "test:desktop": "npm test --workspace @github-model-relay/desktop",
     "typecheck:desktop": "npm run typecheck --workspace @github-model-relay/desktop",

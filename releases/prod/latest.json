@@ -1,0 +1,21 @@
+{
+  "product": "githubrelay",
+  "channel": "prod",
+  "version": "0.2.2",
+  "publishedAt": "2026-09-14T00:00:00Z",
+  "notesUrl": "https://github.com/saketlunker/githubRelay/releases",
+  "sourceRepository": "saketlunker/githubRelay",
+  "install": {
+    "npm": "npm install -g githubrelay"
+  },
+  "bootstrap": {
+    "strategy": "package-reinstall"
+  },
+  "requirements": {
+    "node": ">=22.13.0",
+    "platforms": [
+      "windows-x64",
+      "windows-arm64"
+    ]
+  }
+}

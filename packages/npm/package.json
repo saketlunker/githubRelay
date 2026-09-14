@@ -1,0 +1,38 @@
+{
+  "name": "githubrelay",
+  "version": "0.2.2",
+  "description": "One-line installer for GitHub Model Relay. Turns your GitHub Copilot subscription into a local API for Claude Code, Codex, OpenCode, and Pi.",
+  "type": "module",
+  "bin": {
+    "githubrelay": "bin/githubrelay.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "payload/",
+    "README.md"
+  ],
+  "scripts": {
+    "prepack": "node ../../scripts/build-npm-payload.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "keywords": [
+    "copilot",
+    "claude-code",
+    "codex",
+    "opencode",
+    "gateway",
+    "llm",
+    "cli"
+  ],
+  "author": "Saket Lunker",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/saketlunker/githubRelay.git"
+  },
+  "homepage": "https://github.com/saketlunker/githubRelay"
+}

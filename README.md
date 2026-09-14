@@ -133,7 +133,22 @@ package is `@earendil-works/pi-coding-agent`.
 
 ## Install
 
-Clone this repository, open PowerShell in the checkout, and run:
+The quickest path is the npm launcher:
+
+```powershell
+npm install -g githubrelay && githubrelay setup
+```
+
+`setup` checks prerequisites, installs the gateway, runs GitHub device
+sign-in, configures Claude Code / Codex / OpenCode / Pi, and starts the relay.
+Sign-in needs a console, so it is an explicit step rather than an `npm`
+lifecycle script. If anything misbehaves, `githubrelay doctor` prints a
+redacted report suitable for sharing. See [`packages/npm`](packages/npm) for
+the launcher and [`docs/release-feed.md`](docs/release-feed.md) for the
+release channel.
+
+To work from a checkout instead, clone this repository, open PowerShell in it,
+and run:
 
 ```powershell
 .\install.ps1
