@@ -16,16 +16,17 @@ Windows 10 or 11. Open PowerShell and run one line.
 npm install -g githubrelay@latest && githubrelay setup
 ```
 
-**If npm is blocked on your network, or you have no Node.js:**
+**If you have no Node.js, or need the GitHub fallback for the launcher:**
 
 ```powershell
 irm https://raw.githubusercontent.com/saketlunker/githubRelay/main/web-install.ps1 | iex
 ```
 
-The second line installs Node.js through winget when it is missing, and falls
-back to the GitHub release when the npm registry is unreachable — which is the
-case on networks that cannot reach `registry.npmjs.org`. It works everywhere
-the first line works, so it is the safer one to share.
+The second line attempts to install Node.js through winget when it is missing,
+and can obtain the launcher from a GitHub release when npm is unreachable.
+Gateway setup still needs npm dependency registry access or a complete
+existing cache; the launcher fallback is not an offline gateway installer.
+Node installation also depends on winget availability and user permissions.
 
 `setup` checks prerequisites, installs the gateway, signs you in to GitHub
 (the device code is copied to your clipboard and the page opens), starts the

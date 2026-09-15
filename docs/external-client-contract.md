@@ -311,6 +311,14 @@ can stop/restart an existing gateway. These are user actions, never automatic
 Wispling health/connection actions. The headless background process must stay
 running; a visible app window need not remain open.
 
+Relay's existing npm launcher runs its management/authentication PowerShell
+child with process-scoped `-ExecutionPolicy Bypass`
+(`packages\npm\lib\environment.mjs:99,137`). It does not thereby change the
+stored machine execution policy, and managed policy can still block it.
+This is a property of the separate Relay prerequisite, not a recommendation
+for a Wispling installer to copy or execute that flag. Do not describe the
+entire prerequisite chain as execution-policy-workaround-free.
+
 No successful model entitlement, quota, identity-policy acceptance, fresh
 login, signing qualification, or end-to-end beta smoke is implied by these
 checks. Present the observed boundary, not a promise that every Copilot
@@ -330,6 +338,7 @@ Line numbers below refer to the pinned sources, before this documentation:
 | Auth precedence/routes/Origin | `runtime\lib\supervisor-core.mjs:48-90` |
 | Health/error/proxy/cancellation | `runtime\supervisor.mjs:437-458,533-583,714-834` |
 | Setup side effects/updater | `packages\npm\bin\githubrelay.js:70-123,146-197` |
+| Launcher payload / execution policy | `scripts\build-npm-payload.mjs:3-20`, `packages\npm\lib\environment.mjs:87-105,125-138` |
 | Public model shape | Backend `src\routes\models\route.ts:40-56,146-169,508-536` |
 | Model fields/normalization/mapping | Backend `src\lib\types\models.ts:1-55`, `src\lib\models.ts:11-16`, `src\lib\model-policy.ts:124-126` |
 | Chat request/SSE | Backend `src\routes\chat-completions\handler.ts:27-145`, `src\lib\types\chat-completions.ts:1-199` |
