@@ -526,6 +526,11 @@ inventing context/output limits.
 
 ## Other OpenAI/Anthropic clients
 
+For an original native client, use the pinned
+[external client contract](docs/external-client-contract.md) and its
+credential-free protocol samples. It separates process health from account
+readiness and documents catalog, SSE, cancellation, and installation limits.
+
 After `configure-clients` has set the user environment variable:
 
 | Protocol | Base URL | Authentication |

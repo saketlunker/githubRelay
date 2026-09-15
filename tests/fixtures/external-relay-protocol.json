@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 1,
+  "fictional": true,
+  "relaySourceSha": "94e8a9e375f572c80f4ff2c5271a9c435d831e64",
+  "backendSourceSha": "590bc1473e224dbb2d588d3cfb475f823de3ad74",
+  "backendVersion": "2.0.1",
+  "authentication": "Supply a test-owned local key separately. No credential is included.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": {
+      "content-type": "application/json",
+      "accept": "text/event-stream",
+      "user-agent": "Wispling/fixture"
+    },
+    "body": {
+      "model": "fixture-chat",
+      "messages": [
+        { "role": "system", "content": "Reply briefly." },
+        { "role": "user", "content": "A synthetic test message." }
+      ],
+      "stream": true,
+      "max_tokens": 64,
+      "stream_options": { "include_usage": true }
+    }
+  },
+  "health": [
+    {
+      "status": 200,
+      "body": {
+        "status": "ready",
+        "backendReady": true,
+        "instanceId": "fixture-instance",
+        "activeVersionId": "fixture-release"
+      }
+    },
+    {
+      "status": 503,
+      "body": {
+        "status": "blocked-auth",
+        "backendReady": false,
+        "instanceId": "fixture-instance",
+        "activeVersionId": "fixture-release"
+      }
+    }
+  ],
+  "catalog": {
+    "object": "list",
+    "data": [
+      {
+        "id": "fixture-chat",
+        "object": "model",
+        "type": "model",
+        "created": 0,
+        "created_at": "1970-01-01T00:00:00.000Z",
+        "name": "Fictional text model",
+        "display_name": "Fictional text model",
+        "vendor": "fixture",
+        "owned_by": "fixture",
+        "claude_model_id": "fixture-chat",
+        "version": "fixture-v1",
+        "preview": false,
+        "model_picker_enabled": true,
+        "policy": { "state": "enabled", "terms": "Fictional fixture only" },
+        "supported_endpoints": ["/chat/completions"],
+        "capabilities": {
+          "type": "chat",
+          "family": "fixture",
+          "object": "model_capabilities",
+          "tokenizer": "fixture-tokenizer",
+          "limits": {
+            "max_context_window_tokens": 8192,
+            "max_prompt_tokens": 8128,
+            "max_output_tokens": 64
+          },
+          "supports": { "streaming": true, "tool_calls": false, "vision": false }
+        }
+      },
+      {
+        "id": "fixture-responses-only",
+        "object": "model",
+        "model_picker_enabled": true,
+        "policy": { "state": "enabled" },
+        "supported_endpoints": ["/responses"],
+        "capabilities": { "type": "chat", "supports": { "streaming": true } }
+      },
+      {
+        "id": "fixture-disabled",
+        "object": "model",
+        "model_picker_enabled": true,
+        "policy": { "state": "disabled" },
+        "supported_endpoints": ["/chat/completions"],
+        "capabilities": { "type": "chat", "supports": { "streaming": true } }
+      },
+      {
+        "id": "fixture-unknown-capabilities",
+        "object": "model"
+      },
+      {
+        "id": "fixture-provider/fixture-chat",
+        "object": "model",
+        "model_picker_enabled": true,
+        "supported_endpoints": ["/chat/completions"],
+        "capabilities": { "type": "chat", "supports": { "streaming": true } }
+      }
+    ],
+    "has_more": false
+  },
+  "streamContentType": "text/event-stream; charset=utf-8",
+  "streams": [
+    {
+      "name": "text-usage-crlf-multiline-utf8",
+      "wire": ": fixture heartbeat\r\n\r\nid: fixture-event\r\nevent: message\r\ndata: {\"id\":\"fixture-stream\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"fixture-chat\",\r\ndata: \"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null},\"finish_reason\":null,\"logprobs\":null}]}\r\n\r\ndata: {\"id\":\"fixture-stream\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"fixture-chat\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello, caf\u00e9.\"},\"finish_reason\":null,\"logprobs\":null}]}\r\n\r\ndata: {\"id\":\"fixture-stream\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"fixture-chat\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\",\"logprobs\":null}]}\r\n\r\ndata: {\"id\":\"fixture-stream\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"fixture-chat\",\"choices\":[],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":4,\"total_tokens\":12}}\r\n\r\ndata: [DONE]\r\n\r\n",
+      "expected": { "text": "Hello, caf\u00e9.", "finishReason": "stop", "done": true, "outcome": "complete" }
+    },
+    {
+      "name": "hidden-reasoning-is-not-answer",
+      "wire": "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"fixture reasoning must not display\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Visible answer.\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+      "expected": { "text": "Visible answer.", "finishReason": "stop", "done": true, "outcome": "complete" }
+    },
+    {
+      "name": "output-limit",
+      "wire": "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Partial answer\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n",
+      "expected": { "text": "Partial answer", "finishReason": "length", "done": true, "outcome": "output_limit" }
+    },
+    {
+      "name": "content-filter",
+      "wire": "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"content_filter\"}]}\n\ndata: [DONE]\n\n",
+      "expected": { "text": "", "finishReason": "content_filter", "done": true, "outcome": "filtered" }
+    },
+    {
+      "name": "unsupported-tools",
+      "wire": "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"fixture-call\",\"type\":\"function\",\"function\":{\"name\":\"fixture_tool\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+      "expected": { "text": "", "finishReason": "tool_calls", "done": true, "outcome": "unsupported_tools" }
+    },
+    {
+      "name": "eof-without-done",
+      "wire": "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Unfinished answer\"},\"finish_reason\":null}]}\n\n",
+      "expected": { "text": "Unfinished answer", "finishReason": null, "done": false, "outcome": "truncated_stream" }
+    },
+    {
+      "name": "finish-reason-without-done",
+      "wire": "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Not transport-complete\"},\"finish_reason\":\"stop\"}]}\n\n",
+      "expected": { "text": "Not transport-complete", "finishReason": "stop", "done": false, "outcome": "truncated_stream" }
+    },
+    {
+      "name": "malformed-event",
+      "wire": "data: {not valid JSON}\n\n",
+      "expected": { "text": "", "finishReason": null, "done": false, "outcome": "invalid_stream" }
+    },
+    {
+      "name": "synthetic-midstream-error",
+      "wire": "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Partial\"},\"finish_reason\":null}]}\n\nevent: error\ndata: {\"error\":{\"type\":\"error\",\"message\":\"fictional upstream failure; do not display raw\"}}\n\n",
+      "expected": { "text": "Partial", "finishReason": null, "done": false, "outcome": "upstream_error" }
+    },
+    {
+      "name": "ignore-data-after-done",
+      "wire": "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"One answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\" stale text must not display\"},\"finish_reason\":null}]}\n\n",
+      "expected": { "text": "One answer", "finishReason": "stop", "done": true, "outcome": "complete" }
+    }
+  ],
+  "errors": [
+    { "status": 401, "body": { "error": "unauthorized" }, "origin": "proxy" },
+    { "status": 403, "body": { "error": "origin_not_allowed" }, "origin": "proxy" },
+    { "status": 404, "body": { "error": "route_not_exposed" }, "origin": "proxy" },
+    { "status": 503, "body": { "error": "backend_not_ready" }, "origin": "proxy" },
+    { "status": 429, "headers": { "retry-after": "3" }, "body": { "error": "rate_limited" }, "origin": "proxy" },
+    { "status": 429, "headers": { "retry-after": "1" }, "body": { "error": "concurrency_limited" }, "origin": "proxy" },
+    { "status": 502, "body": { "error": "upstream_error" }, "origin": "proxy" },
+    { "status": 403, "body": { "error": { "message": "{\"error\":\"fictional entitlement failure\"}", "type": "error" } }, "origin": "backend" },
+    { "status": 429, "headers": { "retry-after": "7" }, "body": { "error": { "message": "fictional upstream rate limit", "type": "error" } }, "origin": "backend" },
+    { "status": 500, "body": { "error": { "message": "fictional backend exception", "type": "error" } }, "origin": "backend" }
+  ],
+  "cancellation": {
+    "publicCancelEndpoint": null,
+    "clientAction": "Abort native request/reader; drop stale events; emit one cancelled terminal event.",
+    "remoteGenerationStopped": "not guaranteed by this Relay/backend pin",
+    "creditsRefunded": "not guaranteed"
+  }
+}
