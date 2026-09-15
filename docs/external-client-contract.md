@@ -194,6 +194,33 @@ to `max_completion_tokens` unless that field is already present. The Chat
 Completions handler does not add Messages/Responses translation for models
 that support only those endpoints.
 
+### Response headers and first-text deadlines
+
+A successful TCP connection does not mean chat response headers will arrive
+immediately. The backend awaits the remote inference `fetch` before creating
+its Hono SSE response. It sends no initial heartbeat. The pinned Node adapter
+is `srvx@0.11.22` (`src\start.ts`), with `hono@4.13.1` and
+`fetch-event-stream@0.1.6`. The adapter calls `writeHead`, then waits for the
+response reader before writing body bytes; it does not call `flushHeaders`.
+Relay's public proxy also uses `writeHead` followed by `pipe`, without a
+header flush.
+
+On the normal HTTP/1 streaming path, headers can therefore remain buffered
+until the first forwarded SSE record or stream end. This is **not necessarily
+the first visible text**: a role-only record can release headers. The backend
+parser waits for a complete SSE record and discards comment-only heartbeats.
+
+A timeout around a client's entire `send()` future includes waiting for these
+headers, not just TCP connection establishment. Use a transport-level connect
+timeout, a first-visible-text deadline spanning both sending and reading, and
+an independent total deadline. For a client policy of 5/15/120 seconds, keep
+the 5 seconds on TCP connect, not around `send()`. Do not restart the 15-second
+budget when headers, roles, usage, or non-text events arrive. Test delayed
+headers and headers-with-delayed-text separately. This is a static contract
+finding, not a measurement of any real request's latency.
+
+### SSE records
+
 The response is SSE, normally with `data: <JSON>` records and a terminal
 `data: [DONE]`. A text delta looks like:
 
@@ -342,6 +369,8 @@ Line numbers below refer to the pinned sources, before this documentation:
 | Public model shape | Backend `src\routes\models\route.ts:40-56,146-169,508-536` |
 | Model fields/normalization/mapping | Backend `src\lib\types\models.ts:1-55`, `src\lib\models.ts:11-16`, `src\lib\model-policy.ts:124-126` |
 | Chat request/SSE | Backend `src\routes\chat-completions\handler.ts:27-145`, `src\lib\types\chat-completions.ts:1-199` |
+| Response header timing | Backend `src\start.ts:6,192-198`, `src\services\copilot\create-chat-completions.ts:65-79`, `src\routes\chat-completions\handler.ts:83-120`; Relay `runtime\supervisor.mjs:790-806` |
+| Locked stream implementation | `srvx@0.11.22` `dist\adapters\node.mjs:49-56,99-124`; `hono@4.13.1` `dist\helper\streaming\sse.js:47-63`; `fetch-event-stream@0.1.6` `esm\mod.js:35-68` |
 | Upstream errors/cancellation | Backend `src\lib\error.ts:15-59`, `src\services\copilot\create-chat-completions.ts:22-97` |
 
 The original, credential-free vectors in
