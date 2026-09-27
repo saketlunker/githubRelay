@@ -10,6 +10,8 @@ import { CLAUDE_CODE_INSTALL, CODEX_INSTALL, agentInstallCommand, inspectAgents,
 import { failureTail, parseConfigureOutput, releaseIdFrom, summarizeConfiguration } from "../lib/setup-summary.mjs";
 import { formatPreflight, runPreflight } from "../lib/preflight.mjs";
 import { checkForUpdate } from "../lib/update.mjs";
+import { acquireUpdateLock } from "../lib/update-lock.mjs";
+import { ensureUpdateTask, registerUpdateTask, removeUpdateTask, runAutoUpdate } from "../lib/auto-update.mjs";
 
 const HELP = `${PRODUCT_NAME} (${PACKAGE_NAME})
 
@@ -30,6 +32,7 @@ Maintenance
   clients            Re-apply Claude Code / Codex / OpenCode / Pi configuration
   shortcut           Recreate the desktop shortcut for re-linking agents
   update             Update the installed gateway release
+  auto-update        Check for and install updates now (runs at sign-in)
   uninstall          Remove the gateway
   version            Print the installed version
 
@@ -168,12 +171,15 @@ async function setup(args) {
   }
 
   const shortcut = createDesktopShortcut();
+  const updates = registerUpdateTask();
   const advice = agentAdvice();
 
   console.log(clientsConfigured
     ? `\n${PRODUCT_NAME} is ready.`
     : `\n${PRODUCT_NAME} is running, but your coding agents still need attention.`);
-  console.log("It starts automatically when you sign in to Windows.");
+  console.log(updates.ok
+    ? "It starts automatically when you sign in to Windows, and installs updates then too."
+    : "It starts automatically when you sign in to Windows.");
   if (advice.length > 0) {
     console.log("\nBefore you start:");
     for (const line of advice) console.log(line);
@@ -212,17 +218,31 @@ async function main() {
     console.log(`${PACKAGE_NAME} ${packageVersion()}`);
     return;
   }
-
-  await checkForUpdate();
+  // Run by the sign-in task; it takes the update lock and logs on its own.
+  if (command === "auto-update") {
+    return runAutoUpdate();
+  }
 
   // The launcher updates itself from npm, but the gateway is a separate
   // release on disk. Bringing it along automatically is the whole point of
   // shipping a fix: a user should not have to know an update exists.
   // Excluded are commands that report state or deliberately change it, which
   // must not have the gateway swapped underneath them.
-  if (!["doctor", "uninstall", "update", "rollback", "stop", "shortcut", "setup"].includes(command)) {
-    // `clients` re-links on its own right after, with the user's own flags.
-    ensureGatewayCurrent({ relink: !["clients", "configure-clients"].includes(command) });
+  const maintainsInstall = !["doctor", "uninstall", "update", "rollback", "stop", "shortcut", "setup"].includes(command);
+  const lock = acquireUpdateLock();
+  if (lock.acquired) {
+    process.on("exit", lock.release);
+    await checkForUpdate();
+    if (maintainsInstall) {
+      // `clients` re-links on its own right after, with the user's own flags.
+      ensureGatewayCurrent({ relink: !["clients", "configure-clients"].includes(command) });
+    }
+    lock.release();
+  } else {
+    console.error("An update is being installed in the background; this command uses the current version.");
+  }
+  if (maintainsInstall) {
+    ensureUpdateTask();
   }
 
   switch (command) {
@@ -270,9 +290,19 @@ async function main() {
     case "restart":
     case "update":
     case "rollback":
-    case "uninstall":
       requirePreflight();
       return passThrough(command, args);
+    case "uninstall": {
+      requirePreflight();
+      const result = runGateway("uninstall", args);
+      if (result.error) fail(result.error.message);
+      if ((result.status ?? 0) === 0) {
+        const removed = removeUpdateTask();
+        if (!removed.ok) console.error(`Could not remove the sign-in update task: ${removed.reason}`);
+      }
+      process.exit(result.status ?? 0);
+      return undefined;
+    }
     default:
       console.error(`Unknown command: ${command}\n`);
       console.error(HELP);

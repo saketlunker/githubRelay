@@ -1,7 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 import { compareVersions, packageVersion, payloadBackendVersion, runGateway, runGatewayJson } from "./environment.mjs";
+import { readLauncherState as readState, writeLauncherState as writeState } from "./launcher-state.mjs";
 
 const RELEASE_ID = /^gateway-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-backend-/;
 
@@ -17,29 +15,6 @@ export function gatewayNeedsUpdate(activeRelease, payloadVersion) {
   const installed = parseGatewayVersion(activeRelease);
   if (!installed) return false;
   return compareVersions(payloadVersion, installed) > 0;
-}
-
-function statePath() {
-  const root = process.env.LOCALAPPDATA ?? process.env.HOME ?? ".";
-  return join(root, "githubrelay", "launcher-state.json");
-}
-
-function readState() {
-  try {
-    return JSON.parse(readFileSync(statePath(), "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-function writeState(state) {
-  try {
-    const path = statePath();
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-  } catch {
-    // State is an optimisation; failing to record it must not break a command.
-  }
 }
 
 /**

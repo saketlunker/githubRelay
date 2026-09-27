@@ -68,9 +68,9 @@ Shipping today, through the npm launcher:
   directory.
 - Automatic hidden startup at user logon through a least-privilege Scheduled
   Task, plus a repeating watchdog that revives the gateway if it stops.
-- Automatic updates: whenever a `githubrelay` command runs, the launcher
-  updates itself, brings the installed gateway to the same version, and
-  re-links your coding agents.
+- Automatic updates at every Windows sign-in, and whenever a `githubrelay`
+  command runs: the launcher updates itself, brings the installed gateway to
+  the same version, and re-links your coding agents.
 - Lossless, backed-up client configuration for Claude Code, Codex, OpenCode,
   and Pi, including repairing an agent whose command npm failed to link.
 - A redacted diagnostic report (`githubrelay doctor`) for support.
@@ -264,7 +264,8 @@ every session.
 ### Day to day
 
 Nothing. The gateway starts when you sign in to Windows, through a
-least-privilege scheduled task, and your agents already point at it. If it
+least-privilege scheduled task, and your agents already point at it. Updates
+install at sign-in too. If it
 stops for any reason, a watchdog on the same task brings it back within about a
 minute, and after a burst of failures (offline, asleep, between networks) it
 retries on its own rather than giving up.
@@ -322,14 +323,21 @@ by linking the command itself:
 
 ### Updating
 
-Updates are automatic. The launcher checks for a newer release whenever you
-run a `githubrelay` command, including the desktop shortcut, and installs it.
+Updates are automatic. Each time you sign in to Windows, a hidden task waits
+about 30 seconds for the network, checks for a newer release, and installs it.
 It then brings the gateway up to the same version and re-links your coding
 agents, so a changed default reaches them too. Your saved choices, and levels
-picked with `/effort`, are kept.
+picked with `/effort`, are kept. The relay restarts once during an update, for
+about a minute, which is why this happens at sign-in rather than while you
+work. Running any `githubrelay` command, including the desktop shortcut, also
+checks.
 
-`githubrelay update` still exists to force it, and `githubrelay rollback`
-returns to the previous gateway release. Set
+What the last automatic update did is in `githubrelay doctor`, with its log at
+`%LOCALAPPDATA%\githubrelay\auto-update.log`. `githubrelay auto-update` runs
+the same check now.
+
+`githubrelay update` still exists to force a gateway update, and
+`githubrelay rollback` returns to the previous gateway release. Set
 `GITHUBRELAY_DISABLE_AUTO_UPDATE=1` to turn automatic updates off.
 
 ## Installing from a checkout
@@ -721,7 +729,8 @@ depends on upstream. Keep backups until the new pin has been exercised.
 By default uninstall removes the exact Scheduled Task, restores/removes only
 client values still owned by this project, clears the user environment variable
 only when it still equals the generated key, and deletes only paths underneath
-a validated install-root marker:
+a validated install-root marker. `githubrelay uninstall` also removes the
+sign-in update task:
 
 ```powershell
 & $gateway uninstall

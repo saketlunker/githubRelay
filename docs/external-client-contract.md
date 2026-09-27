@@ -331,8 +331,8 @@ offline or universally registry-blocked installation.
 
 `githubrelay setup` installs the gateway, starts external GitHub device
 sign-in, starts the service, configures installed coding-agent defaults, and
-creates a re-link shortcut. The installed gateway also registers logon and
-watchdog tasks and has an independent updater. Existing installs use
+creates a re-link shortcut and a sign-in update task. The installed gateway
+also registers logon and watchdog tasks. Existing installs use
 `githubrelay auth` for sign-in and `githubrelay start` to start; authentication
 can stop/restart an existing gateway. These are user actions, never automatic
 Wispling health/connection actions. The headless background process must stay

@@ -63,6 +63,7 @@ extension. The relay performs its own device sign-in.
 | `githubrelay start` / `stop` / `restart` | Control the gateway |
 | `githubrelay clients` | Re-link coding agents to the relay |
 | `githubrelay shortcut` | Recreate the desktop re-link shortcut |
+| `githubrelay auto-update` | Check for and install updates now (also runs at sign-in) |
 | `githubrelay auth` | Re-run GitHub sign-in |
 | `githubrelay doctor` | Print a redacted report for support |
 
@@ -70,7 +71,8 @@ extension. The relay performs its own device sign-in.
 
 Nothing to do. The gateway starts when you sign in to Windows through a
 least-privilege scheduled task, and your agents are already pointed at it. A
-watchdog brings it back within about a minute if it stops.
+watchdog brings it back within about a minute if it stops, and updates install
+at sign-in.
 
 The one recurring step: after installing a **new** coding agent, run
 `githubrelay clients` — or double-click the desktop shortcut
@@ -112,10 +114,13 @@ githubrelay doctor --out relay-report.md
 
 ## Updating
 
-Updates are automatic. The launcher checks for a newer release on startup and
-installs it, then brings the installed gateway up to the same version. The
-gateway check costs one process spawn, so it runs once per launcher version
-rather than on every command.
+Updates are automatic. Each time you sign in to Windows, a hidden task checks
+for a newer release about 30 seconds later and installs it, then brings the
+installed gateway up to the same version and re-links your coding agents. The
+relay restarts once during an update, which is why it happens at sign-in. Any
+`githubrelay` command checks too; its gateway check costs one process spawn,
+so it runs once per launcher version rather than on every command.
+`githubrelay doctor` shows what the last automatic update did.
 
 To disable automatic updates:
 

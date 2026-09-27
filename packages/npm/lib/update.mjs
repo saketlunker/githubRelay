@@ -13,6 +13,7 @@ import {
   isWindows,
   packageVersion,
 } from "./environment.mjs";
+import { LOCK_HELD_ENV } from "./update-lock.mjs";
 
 const MAX_REDIRECTS = 5;
 const TIMEOUT_MS = 10_000;
@@ -26,7 +27,7 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function withRetries(operation, { attempts = RETRY_ATTEMPTS, onRetry } = {}) {
+async function withRetries(operation, { attempts = RETRY_ATTEMPTS, delayMs = RETRY_DELAY_MS, onRetry } = {}) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
@@ -35,7 +36,7 @@ async function withRetries(operation, { attempts = RETRY_ATTEMPTS, onRetry } = {
       lastError = error;
       if (attempt === attempts) break;
       onRetry?.(attempt, error);
-      await delay(RETRY_DELAY_MS * attempt);
+      await delay(delayMs * attempt);
     }
   }
   throw lastError;
@@ -224,13 +225,16 @@ export { installSpec, withRetries };
 /**
  * Returns true when the process was replaced by a newer launcher and the caller
  * should stop. The re-exec carries a skip flag so an update can never loop.
+ *
+ * One manifest attempt suits a command someone is waiting on. The sign-in
+ * updater asks for more, because the network can still be coming up.
  */
-export async function checkForUpdate({ quiet = true } = {}) {
+export async function checkForUpdate({ quiet = true, manifestAttempts = 1, retryDelayMs = RETRY_DELAY_MS } = {}) {
   if (updatesDisabled()) return false;
 
   let manifest;
   try {
-    manifest = await fetchManifest();
+    manifest = await withRetries(fetchManifest, { attempts: manifestAttempts, delayMs: retryDelayMs });
   } catch (error) {
     if (!quiet) {
       console.error(`Warning: could not check for updates: ${error instanceof Error ? error.message : error}`);
@@ -252,7 +256,13 @@ export async function checkForUpdate({ quiet = true } = {}) {
 
   const relaunch = spawnSync(process.execPath, [process.argv[1], ...process.argv.slice(2)], {
     stdio: "inherit",
-    env: { ...process.env, GITHUBRELAY_SKIP_UPDATE_ONCE: "1" },
+    env: {
+      ...process.env,
+      GITHUBRELAY_SKIP_UPDATE_ONCE: "1",
+      GITHUBRELAY_UPDATED_FROM: packageVersion(),
+      // This process keeps the update lock until the new launcher finishes.
+      [LOCK_HELD_ENV]: "1",
+    },
   });
   process.exit(relaunch.status ?? 0);
 }

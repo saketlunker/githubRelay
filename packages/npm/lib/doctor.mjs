@@ -4,7 +4,9 @@ import { join } from "node:path";
 
 import { PACKAGE_NAME, PRODUCT_NAME, packageVersion, runCommandSync, runGateway, runGatewayJson } from "./environment.mjs";
 import { formatAgents, inspectAgents } from "./agents.mjs";
+import { formatAutoUpdate, readLogTail, updateTaskStatus } from "./auto-update.mjs";
 import { parseGatewayVersion } from "./gateway-sync.mjs";
+import { readLauncherState } from "./launcher-state.mjs";
 import { formatPreflight, runPreflight } from "./preflight.mjs";
 
 const SECRET_KEY_PATTERN = /(key|secret|token|password|authorization|credential|cookie)/i;
@@ -124,6 +126,10 @@ export function buildDoctorReport({ tail = 60 } = {}) {
   }
 
   sections.push(["## Coding agents", "", detectClients()].join("\n"));
+
+  sections.push(
+    ["## Automatic updates", "", scrubText(formatAutoUpdate(updateTaskStatus(), readLauncherState(), readLogTail(20)))].join("\n"),
+  );
 
   sections.push(
     [
