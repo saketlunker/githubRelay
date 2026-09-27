@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { writeFileSync } from "node:fs";
 
-import { PACKAGE_NAME, PRODUCT_NAME, packageVersion, runGateway, runGatewayWatched } from "../lib/environment.mjs";
+import { PACKAGE_NAME, PRODUCT_NAME, packageVersion, runGateway, runGatewayJson, runGatewayWatched } from "../lib/environment.mjs";
 import { buildDoctorReport } from "../lib/doctor.mjs";
 import { createDeviceLoginWatcher } from "../lib/device-login.mjs";
 import { createDesktopShortcut } from "../lib/shortcut.mjs";
 import { ensureGatewayCurrent } from "../lib/gateway-sync.mjs";
-import { linkUnlinkedAgents } from "../lib/agents.mjs";
+import { CLAUDE_CODE_INSTALL, inspectAgents, linkUnlinkedAgents } from "../lib/agents.mjs";
 import { formatPreflight, runPreflight } from "../lib/preflight.mjs";
 import { checkForUpdate } from "../lib/update.mjs";
 
@@ -31,6 +31,12 @@ Maintenance
   update             Update the installed gateway release
   uninstall          Remove the gateway
   version            Print the installed version
+
+Choosing models and reasoning (remembered for later re-links)
+  githubrelay clients -OpusModel claude-opus-5-5 -SonnetModel claude-sonnet-5
+  githubrelay clients -CodexModel gpt-6-astra
+  githubrelay clients -ClaudeEffort max -CodexEffort max
+  Effort is one of: low, medium, high, xhigh, max, default
 
 Environment
   GITHUBRELAY_DISABLE_AUTO_UPDATE=1   Never check for launcher updates
@@ -67,6 +73,31 @@ async function signIn() {
   return runGatewayWatched("authenticate", [], { onLine: createDeviceLoginWatcher({ announce: console.log }) });
 }
 
+function gatewayServing() {
+  const status = runGatewayJson("status");
+  return status.ok && status.value?.Health === "ready";
+}
+
+function agentAdvice() {
+  const lines = [];
+  for (const [name, entry] of Object.entries(inspectAgents())) {
+    if (entry.status === "ready" || (entry.status === "not installed" && !["Claude Code", "Codex"].includes(name))) {
+      continue;
+    }
+    if (entry.status === "not installed") {
+      const install = name === "Claude Code"
+        ? CLAUDE_CODE_INSTALL
+        : "npm install -g @openai/codex@latest --allow-scripts=@openai/codex";
+      lines.push(`  ${name} is not installed. Install it with:`, `    ${install}`, "  then run: githubrelay clients");
+      continue;
+    }
+    lines.push(`  ${name}: ${entry.status}`);
+    if (entry.detail) lines.push(`    ${entry.detail}`);
+    if (entry.fix) lines.push(`    fix: ${entry.fix}`);
+  }
+  return lines;
+}
+
 async function setup(args) {
   const total = 5;
   console.log(`Setting up ${PRODUCT_NAME}.\n`);
@@ -85,22 +116,30 @@ async function setup(args) {
     fail("\nGateway install failed. Run 'githubrelay doctor' and share the output.");
   }
 
+  // Re-running setup on a working install must not force a new device
+  // sign-in: the running relay proves the stored credential still works.
+  const alreadyServing = gatewayServing();
+
   step(3, total, "Signing in to GitHub");
-  const auth = await signIn();
-  if (auth.error || auth.status !== 0) {
-    fail("\nSign-in failed or was cancelled. Re-run: githubrelay auth");
+  if (alreadyServing) {
+    console.log("  Already signed in; the relay is serving requests.");
+  } else {
+    const auth = await signIn();
+    if (auth.error || auth.status !== 0) {
+      fail("\nSign-in failed or was cancelled. Re-run: githubrelay auth");
+    }
   }
 
   // The gateway must be running before clients are configured: client setup
-  // discovers the model list from the loopback endpoint, which does not exist
-  // until the gateway is up.
-  step(4, total, "Starting the gateway");
-  const start = runGateway("start");
+  // discovers the model list from the loopback endpoint. On a re-run the new
+  // release only takes effect after a restart; "start" would keep the old one.
+  step(4, total, alreadyServing ? "Restarting the gateway" : "Starting the gateway");
+  const start = runGateway(alreadyServing ? "restart" : "start");
   if (start.error || start.status !== 0) {
     fail("\nThe gateway did not start. Run 'githubrelay doctor' and share the output.");
   }
 
-  step(5, total, "Configuring your clients");
+  step(5, total, "Configuring your coding agents");
   // An agent whose command npm never linked looks absent to client
   // configuration, so link it first.
   for (const entry of linkUnlinkedAgents()) {
@@ -110,14 +149,22 @@ async function setup(args) {
   // Codex keeps its own provider and calls api.openai.com, which fails with
   // 401 even though the relay is running and configured.
   const clients = runGateway("configure-clients", ["-Clients", "all", "-SetDefault"]);
-  if (clients.error || clients.status !== 0) {
-    console.error("Client configuration failed. Re-run with: githubrelay clients");
+  const clientsConfigured = !clients.error && clients.status === 0;
+  if (!clientsConfigured) {
+    console.error("\nAgent configuration failed. Run 'githubrelay doctor' and share the output.");
   }
 
   const shortcut = createDesktopShortcut();
+  const advice = agentAdvice();
 
-  console.log(`\n${PRODUCT_NAME} is ready.`);
+  console.log(clientsConfigured
+    ? `\n${PRODUCT_NAME} is ready.`
+    : `\n${PRODUCT_NAME} is running, but your coding agents still need attention.`);
   console.log("It starts automatically when you sign in to Windows.");
+  if (advice.length > 0) {
+    console.log("\nBefore you start:");
+    for (const line of advice) console.log(line);
+  }
   console.log("\nOpen a new terminal and run 'claude' or 'codex' to use it.");
   if (shortcut.ok) {
     console.log("\nInstalled a coding agent later? Run the desktop shortcut");
@@ -126,7 +173,7 @@ async function setup(args) {
     console.log("\nInstalled a coding agent later? Run: githubrelay clients");
   }
   console.log("If something looks wrong, run: githubrelay doctor");
-  process.exit(0);
+  process.exit(clientsConfigured ? 0 : 1);
 }
 
 function doctor(args) {
@@ -178,12 +225,19 @@ async function main() {
       return undefined;
     }
     case "clients":
-    case "configure-clients":
+    case "configure-clients": {
       requirePreflight();
       for (const entry of linkUnlinkedAgents()) {
         console.log(`linked ${entry.command} -> ${entry.path}`);
       }
-      return passThrough("configure-clients", args.length > 0 ? args : ["-Clients", "all", "-SetDefault"]);
+      // Re-linking always selects the relay as the default provider, even
+      // when a model or effort is also given: without -SetDefault, Codex keeps
+      // its own provider and a chosen default model is never applied.
+      const forwarded = args.some((value) => value.toLowerCase() === "-setdefault")
+        ? args
+        : [...args, "-SetDefault"];
+      return passThrough("configure-clients", forwarded);
+    }
     case "shortcut": {
       const created = createDesktopShortcut();
       if (created.ok) {

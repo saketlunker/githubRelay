@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
-import { AGENTS, classifyAgent, formatAgents } from "../lib/agents.mjs";
+import {
+  AGENTS,
+  CLAUDE_CODE_INSTALL,
+  claudeCodeUpgradeNeeded,
+  classifyAgent,
+  findOnPath,
+  formatAgents,
+} from "../lib/agents.mjs";
 
 const claude = AGENTS.find((agent) => agent.command === "claude");
 const codex = AGENTS.find((agent) => agent.command === "codex");
@@ -107,4 +117,39 @@ test("the formatted report shows the fix under the agent", () => {
   assert.match(text, /Claude Code: installed but broken/);
   assert.match(text, /fix: npm install -g x/);
   assert.match(text, /Codex: ready/);
+});
+
+test("a Claude Code build too old for the configured model is caught", () => {
+  // The exact case observed: Opus 5.5 is refused below 2.1.280.
+  const upgrade = claudeCodeUpgradeNeeded("2.1.278", ["claude-opus-5-5", "claude-sonnet-5"]);
+  assert.deepEqual(upgrade, { model: "claude-opus-5-5", required: "2.1.280", version: "2.1.278" });
+
+  assert.equal(claudeCodeUpgradeNeeded("2.1.283", ["claude-opus-5-5"]), undefined);
+  assert.equal(claudeCodeUpgradeNeeded("2.1.200", ["claude-sonnet-5"]), undefined, "no minimum, no warning");
+  assert.equal(claudeCodeUpgradeNeeded(undefined, ["claude-opus-5-5"]), undefined, "an unreadable version is not guessed at");
+});
+
+test("an outdated Claude Code is reported with the installer that fixes it", () => {
+  const result = classifyAgent(claude, {
+    packageInstalled: true,
+    shimPresent: true,
+    binaryPresent: true,
+    configPresent: true,
+    upgrade: { model: "claude-opus-5-5", required: "2.1.280", version: "2.1.278" },
+  });
+
+  assert.equal(result.status, "update needed");
+  assert.match(result.detail, /2\.1\.278 is too old for claude-opus-5-5/);
+  assert.equal(result.fix, CLAUDE_CODE_INSTALL);
+});
+
+test("an agent installed outside npm is found on PATH", () => {
+  const directory = mkdtempSync(join(tmpdir(), "githubrelay-path-"));
+  try {
+    writeFileSync(join(directory, "claude.exe"), "");
+    assert.equal(findOnPath("claude", { PATH: directory }), join(directory, "claude.exe"));
+    assert.equal(findOnPath("codex", { PATH: directory }), undefined);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

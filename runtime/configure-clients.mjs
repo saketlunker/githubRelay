@@ -46,6 +46,30 @@ export const CODEX_PROVIDER_END = '# <<< copilot-harness-gateway:provider <<<';
 export const CODEX_DEFAULTS_BEGIN = '# >>> copilot-harness-gateway:defaults >>>';
 export const CODEX_DEFAULTS_END = '# <<< copilot-harness-gateway:defaults <<<';
 
+export const EFFORT_LEVELS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
+export const DEFAULT_EFFORT = 'max';
+
+// What this relay is for: the strongest Claude model in Claude Code and the
+// strongest GPT model in Codex. Each list is tried in order and the first
+// model the account can see wins, so an account without one falls back to
+// the newest model of the same family instead of failing.
+export const PREFERRED_MODELS = Object.freeze({
+  opus: Object.freeze(['claude-opus-5-5']),
+  sonnet: Object.freeze(['claude-sonnet-5']),
+  codex: Object.freeze(['gpt-6-astra']),
+});
+
+// Choices that persist, so re-linking agents later keeps what the user picked.
+const PREFERENCE_KEYS = Object.freeze([
+  'claudeModel',
+  'sonnetModel',
+  'opusModel',
+  'fastModel',
+  'codexModel',
+  'claudeEffort',
+  'codexEffort',
+]);
+
 const OWNERSHIP_SCHEMA_VERSION = 1;
 const VALUE_OPTIONS = new Map([
   ['--root', 'root'],
@@ -57,6 +81,8 @@ const VALUE_OPTIONS = new Map([
   ['--opus-model', 'opusModel'],
   ['--codex-model', 'codexModel'],
   ['--fast-model', 'fastModel'],
+  ['--claude-effort', 'claudeEffort'],
+  ['--codex-effort', 'codexEffort'],
   ['--models-file', 'modelsFile'],
   ['--timeout-ms', 'timeoutMs'],
 ]);
@@ -179,9 +205,18 @@ export function parseConfigureClientsArgs(argv) {
     throw new Error('--root is required.');
   }
 
-  for (const property of ['model', 'claudeModel', 'codexModel', 'fastModel']) {
+  for (const property of ['model', 'claudeModel', 'sonnetModel', 'opusModel', 'codexModel', 'fastModel']) {
     if (parsed[property] !== undefined) {
       validateModelId(parsed[property], `Value for --${property.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`);
+    }
+  }
+  // "default" leaves effort to the client instead of pinning it.
+  const effortChoices = [...EFFORT_LEVELS, 'default'];
+  for (const property of ['claudeEffort', 'codexEffort']) {
+    if (parsed[property] !== undefined && !effortChoices.includes(parsed[property])) {
+      throw new Error(
+        `--${property.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)} must be one of: ${effortChoices.join(', ')}.`,
+      );
     }
   }
 
@@ -190,8 +225,12 @@ export function parseConfigureClientsArgs(argv) {
     && (
       parsed.model !== undefined
       || parsed.claudeModel !== undefined
+      || parsed.sonnetModel !== undefined
+      || parsed.opusModel !== undefined
       || parsed.codexModel !== undefined
       || parsed.fastModel !== undefined
+      || parsed.claudeEffort !== undefined
+      || parsed.codexEffort !== undefined
       || parsed.modelsFile !== undefined
       || parsed.setDefault
     )
@@ -211,6 +250,8 @@ export function parseConfigureClientsArgs(argv) {
     opusModel: parsed.opusModel,
     codexModel: parsed.codexModel,
     fastModel: parsed.fastModel,
+    claudeEffort: parsed.claudeEffort,
+    codexEffort: parsed.codexEffort,
     setDefault: parsed.setDefault === true,
     dryRun: parsed.dryRun === true,
     remove: parsed.remove === true,
@@ -632,6 +673,7 @@ function claudeDesiredValues({
   sonnetModel = claudeModel,
   opusModel = claudeModel,
   fastModel,
+  effort,
   setDefault = false,
   platform = process.platform,
 }) {
@@ -643,6 +685,13 @@ function claudeDesiredValues({
     { path: ['env', 'ANTHROPIC_DEFAULT_OPUS_MODEL'], value: opusModel },
     { path: ['env', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'], value: fastModel },
   ];
+  // The environment variable, not settings.json's effortLevel: that setting
+  // only accepts low through xhigh and silently drops "max", which left
+  // sessions at the default effort. Measured through the relay on Opus 5.5:
+  // effortLevel "max" produced 126 output tokens, this variable 2980.
+  if (effort !== undefined) {
+    desired.push({ path: ['env', 'CLAUDE_CODE_EFFORT_LEVEL'], value: effort });
+  }
   if (setDefault) {
     desired.push({ path: ['model'], value: claudeModel });
   }
@@ -1009,12 +1058,82 @@ function externalCodexDefaults(text) {
     if (isTomlTableHeader(line)) {
       break;
     }
-    const match = line.content.match(/^\s*(model|model_provider)\s*=/);
+    const match = line.content.match(/^\s*(model|model_provider|model_reasoning_effort)\s*=/);
     if (match) {
       found.add(match[1]);
     }
   }
   return found;
+}
+
+const CODEX_PROVIDER_HEADER = /^\s*\[model_providers\.copilot_harness_gateway\]\s*(?:#.*)?$/;
+const CODEX_DEFAULT_KEY = /^\s*(model_provider|model|model_reasoning_effort)\s*=/;
+
+function withoutFinalEol(text) {
+  return text.replace(/\r?\n$/, '');
+}
+
+function sameManagedText(left, right) {
+  const normalize = (value) =>
+    value.split(/\r?\n/).map((line) => line.trimEnd()).join('\n').trim();
+  return normalize(left) === normalize(right);
+}
+
+/** The lines strictly between a block's begin and end markers, with EOLs. */
+function innerMarkerLines(blockText) {
+  return textLines(blockText)
+    .slice(1, -1)
+    .map((line) => blockText.slice(line.start, line.end));
+}
+
+/**
+ * Separates the gateway's table from anything else inside the provider
+ * markers.
+ *
+ * TOML editors that preserve comments attach them to neighbouring items, so
+ * a tool that rewrites config.toml can leave its own keys and tables between
+ * these markers. The Codex desktop app does exactly that. Treating the whole
+ * block as ours then meant either refusing to run or deleting the other
+ * tool's settings. Only the table is ours; `before` and `after` are kept.
+ */
+function splitProviderBlock(blockText) {
+  const inner = innerMarkerLines(blockText);
+  const headerIndex = inner.findIndex((line) =>
+    CODEX_PROVIDER_HEADER.test(withoutFinalEol(line)));
+  if (headerIndex === -1) {
+    return null;
+  }
+  let endIndex = inner.length;
+  for (let index = headerIndex + 1; index < inner.length; index += 1) {
+    if (isTomlTableHeader({ content: withoutFinalEol(inner[index]) })) {
+      endIndex = index;
+      break;
+    }
+  }
+  return {
+    before: inner.slice(0, headerIndex).join(''),
+    table: inner.slice(headerIndex, endIndex).join(''),
+    after: inner.slice(endIndex).join(''),
+  };
+}
+
+/** Separates the gateway's top-level keys from other lines in the defaults block. */
+function splitDefaultsBlock(blockText) {
+  const ours = [];
+  const foreign = [];
+  for (const line of innerMarkerLines(blockText)) {
+    const content = withoutFinalEol(line);
+    if (CODEX_DEFAULT_KEY.test(content)) {
+      ours.push(content.trim());
+    } else if (content.trim().length > 0) {
+      foreign.push(line);
+    }
+  }
+  return { ours, foreign: foreign.join('') };
+}
+
+function modelDefaultLines(lines) {
+  return lines.filter((line) => !line.startsWith('model_reasoning_effort')).join('\n');
 }
 
 function previousManagedBlock(previousBlocks, name) {
@@ -1055,13 +1174,17 @@ function codexProviderBlock(baseUrl, eol) {
   ].join(eol);
 }
 
-function codexDefaultsBlock(model, eol) {
-  return [
+function codexDefaultsBlock(model, eol, reasoningEffort) {
+  const lines = [
     CODEX_DEFAULTS_BEGIN,
     `model_provider = ${JSON.stringify(CODEX_PROVIDER_ID)}`,
     `model = ${JSON.stringify(model)}`,
-    CODEX_DEFAULTS_END,
-  ].join(eol);
+  ];
+  if (reasoningEffort !== undefined) {
+    lines.push(`model_reasoning_effort = ${JSON.stringify(reasoningEffort)}`);
+  }
+  lines.push(CODEX_DEFAULTS_END);
+  return lines.join(eol);
 }
 
 export function mergeCodexConfig(
@@ -1069,6 +1192,7 @@ export function mergeCodexConfig(
   {
     baseUrl,
     model,
+    reasoningEffort,
     setDefault = false,
     force = false,
     previousBlocks = [],
@@ -1106,16 +1230,46 @@ export function mergeCodexConfig(
   }
 
   if (initialProviderRange) {
-    checkManagedBlockConflict({
-      current: initialProviderRange.text,
-      desired: providerBlock,
-      previous: providerPrevious,
-      force,
-      filePath,
-      name: 'provider',
-    });
+    const split = splitProviderBlock(initialProviderRange.text);
+    if (split === null) {
+      checkManagedBlockConflict({
+        current: initialProviderRange.text,
+        desired: providerBlock,
+        previous: providerPrevious,
+        force,
+        filePath,
+        name: 'provider',
+      });
+      output = replaceTextRange(output, initialProviderRange, providerBlock);
+    } else {
+      // Only a change to the gateway's own table counts as a user edit;
+      // other tools' content around it is expected and is preserved.
+      const desiredTable = splitProviderBlock(providerBlock).table;
+      const previousTable = providerPrevious
+        ? splitProviderBlock(providerPrevious.appliedText)?.table
+        : undefined;
+      if (
+        previousTable !== undefined
+        && !sameManagedText(split.table, previousTable)
+        && !sameManagedText(split.table, desiredTable)
+        && !force
+      ) {
+        throw new Error(
+          `Refusing to replace a user-modified Codex provider block in "${filePath}" without --force.`,
+        );
+      }
+      // The markers are comments, so moving them around the foreign content
+      // leaves the meaning of the file unchanged.
+      const after = split.after.trim().length > 0
+        ? `${eol}${withoutFinalEol(split.after)}`
+        : '';
+      output = replaceTextRange(
+        output,
+        initialProviderRange,
+        `${split.before}${providerBlock}${after}`,
+      );
+    }
     providerOriginal = providerPrevious?.original ?? { present: false };
-    output = replaceTextRange(output, initialProviderRange, providerBlock);
   } else if (unmarkedProviders.length > 0) {
     if (unmarkedProviders.length !== 1) {
       throw new Error(`Codex configuration "${filePath}" has duplicate unmarked gateway provider tables.`);
@@ -1164,25 +1318,42 @@ export function mergeCodexConfig(
   let defaultSkipped = false;
 
   if (setDefault) {
-    const defaultsBlock = codexDefaultsBlock(model, eol);
+    const externalDefaults = externalCodexDefaults(output);
+    // Repeating a top-level key makes the whole file invalid TOML, so an
+    // effort that another tool already set is left to that tool.
+    const effort = externalDefaults.has('model_reasoning_effort')
+      ? undefined
+      : reasoningEffort;
+    const externalModelDefaults = [...externalDefaults]
+      .filter((key) => key !== 'model_reasoning_effort');
+    const defaultsBlock = codexDefaultsBlock(model, eol, effort);
     const defaultsPrevious = previousManagedBlock(previousBlocks, 'defaults');
     const defaultsRange = codexMarkerRanges(output).defaults;
-    const externalDefaults = externalCodexDefaults(output);
     if (defaultsRange) {
-      if (externalDefaults.size > 0) {
+      if (externalModelDefaults.length > 0) {
         throw new Error(
           `Codex configuration "${filePath}" has conflicting managed and unmarked top-level model defaults.`,
         );
       }
-      checkManagedBlockConflict({
-        current: defaultsRange.text,
-        desired: defaultsBlock,
-        previous: defaultsPrevious,
-        force,
-        filePath,
-        name: 'defaults',
-      });
-      output = replaceTextRange(output, defaultsRange, defaultsBlock);
+      const split = splitDefaultsBlock(defaultsRange.text);
+      const previousOurs = defaultsPrevious
+        ? splitDefaultsBlock(defaultsPrevious.appliedText).ours
+        : undefined;
+      const desiredOurs = splitDefaultsBlock(defaultsBlock).ours;
+      if (
+        previousOurs !== undefined
+        && modelDefaultLines(split.ours) !== modelDefaultLines(previousOurs)
+        && modelDefaultLines(split.ours) !== modelDefaultLines(desiredOurs)
+        && !force
+      ) {
+        throw new Error(
+          `Refusing to replace a user-modified Codex defaults block in "${filePath}" without --force.`,
+        );
+      }
+      const trailing = split.foreign.length > 0
+        ? `${eol}${withoutFinalEol(split.foreign)}`
+        : '';
+      output = replaceTextRange(output, defaultsRange, `${defaultsBlock}${trailing}`);
       managedBlocks.push({
         name: 'defaults',
         beginMarker: CODEX_DEFAULTS_BEGIN,
@@ -1193,7 +1364,7 @@ export function mergeCodexConfig(
         leadingText: defaultsPrevious?.leadingText ?? '',
         trailingText: defaultsPrevious?.trailingText ?? '',
       });
-    } else if (externalDefaults.size > 0) {
+    } else if (externalModelDefaults.length > 0) {
       defaultSkipped = true;
     } else {
       if (defaultsPrevious && !force) {
@@ -1214,6 +1385,23 @@ export function mergeCodexConfig(
         trailingText: inserted.trailingText,
       });
     }
+  }
+
+  // Last line of defence: never hand Codex a file it cannot parse. A broken
+  // config.toml stops both the CLI and the desktop app from starting.
+  let parsedOutput;
+  try {
+    parsedOutput = parseToml(output.startsWith('\uFEFF') ? output.slice(1) : output);
+  } catch (error) {
+    throw new Error(
+      `Refusing to write invalid TOML to "${filePath}"; the file was left unchanged.`,
+      { cause: error },
+    );
+  }
+  if (parsedOutput?.model_providers?.[CODEX_PROVIDER_ID]?.base_url !== `${baseUrl}/v1`) {
+    throw new Error(
+      `The gateway provider did not survive editing "${filePath}"; the file was left unchanged.`,
+    );
   }
 
   return {
@@ -1413,7 +1601,33 @@ function newestModel(models, predicate) {
   return matches.at(-1);
 }
 
-export function selectClientModels(catalog, options) {
+/**
+ * Picks the reasoning effort to configure for a model.
+ *
+ * Asking for more than a model supports gets the request rejected upstream,
+ * which matters when a preferred model is missing and a fallback is chosen:
+ * gpt-5.3-codex, for example, stops at "xhigh". The request is clamped down to
+ * the strongest level the model advertises. A model that advertises no levels
+ * gets none, and one with no capability data is trusted with the request.
+ */
+export function effortForModel(requested, model) {
+  const level = requested ?? DEFAULT_EFFORT;
+  if (level === 'default') {
+    return undefined;
+  }
+  const supported = model?.capabilities?.supports?.reasoning_effort;
+  if (!Array.isArray(supported)) {
+    return level;
+  }
+  for (let index = EFFORT_LEVELS.indexOf(level); index >= 0; index -= 1) {
+    if (supported.includes(EFFORT_LEVELS[index])) {
+      return EFFORT_LEVELS[index];
+    }
+  }
+  return undefined;
+}
+
+export function selectClientModels(catalog, options, preferences = {}) {
   const ids = new Set(catalog.models.map((model) => model.id));
   for (const [optionName, modelId] of [
     ['--model', options.model],
@@ -1428,22 +1642,50 @@ export function selectClientModels(catalog, options) {
     }
   }
 
+  // A saved choice applies only while the account can still see the model;
+  // otherwise it falls back rather than failing every later re-link.
+  const saved = {};
+  for (const key of ['claudeModel', 'sonnetModel', 'opusModel', 'fastModel', 'codexModel']) {
+    if (typeof preferences[key] === 'string' && ids.has(preferences[key])) {
+      saved[key] = preferences[key];
+    }
+  }
+  const preferred = (candidates) => candidates.find((id) => ids.has(id));
+  const newestClaude = (family) => newestModel(
+    catalog.models,
+    (id) => id.includes('claude') && id.includes(family),
+  );
+
   const defaultModel = options.model ?? catalog.aliases.default;
-  const claudeModel =
-    options.claudeModel
+  const explicitClaude = options.claudeModel ?? options.model;
+  const claudeFallback = catalog.aliases.claude ?? defaultModel;
+
+  // An explicit --claude-model fills both slots, which is what pinning one
+  // model means; --sonnet-model and --opus-model set the slots separately.
+  const opusModel = options.opusModel
+    ?? explicitClaude
+    ?? saved.opusModel
+    ?? preferred(PREFERRED_MODELS.opus)
+    ?? newestClaude('opus')
+    ?? claudeFallback;
+  const sonnetModel = options.sonnetModel
+    ?? explicitClaude
+    ?? saved.sonnetModel
+    ?? preferred(PREFERRED_MODELS.sonnet)
+    ?? newestClaude('sonnet')
+    ?? claudeFallback;
+  // Claude Code starts on the Opus slot: the strongest model is the point.
+  const claudeModel = explicitClaude
+    ?? saved.claudeModel
+    ?? (typeof opusModel === 'string' && isClaudeModel(opusModel) ? opusModel : claudeFallback);
+  const codexModel = options.codexModel
     ?? options.model
-    ?? catalog.aliases.claude
-    ?? defaultModel;
-  const codexModel =
-    options.codexModel
-    ?? options.model
+    ?? saved.codexModel
+    ?? preferred(PREFERRED_MODELS.codex)
     ?? catalog.aliases.codex
     ?? defaultModel;
-  const fastModel =
-    options.fastModel
-    ?? options.model
-    ?? catalog.aliases.fast
-    ?? defaultModel;
+  const chosenFast = options.fastModel ?? options.model ?? saved.fastModel;
+  const fastModel = chosenFast ?? catalog.aliases.fast ?? defaultModel;
 
   for (const [selection, modelId] of Object.entries({
     defaultModel,
@@ -1456,35 +1698,22 @@ export function selectClientModels(catalog, options) {
     }
   }
 
-  const explicitClaudeOverride = options.claudeModel !== undefined || options.model !== undefined;
-  // An explicit --sonnet-model / --opus-model always wins, so the two slots can
-  // differ. Without them a --claude-model applies to both, which is what a user
-  // pinning a single model expects.
-  const sonnetModel = options.sonnetModel
-    ?? (explicitClaudeOverride
-      ? claudeModel
-      : newestModel(
-        catalog.models,
-        (id) => id.includes('claude') && id.includes('sonnet'),
-      ) ?? claudeModel);
-  const opusModel = options.opusModel
-    ?? (explicitClaudeOverride
-      ? claudeModel
-      : newestModel(
-        catalog.models,
-        (id) => id.includes('claude') && id.includes('opus'),
-      ) ?? claudeModel);
-  // An explicit --fast-model is honoured even when it is not a Claude model.
-  // The catalog can advertise a Haiku the account cannot actually call, and
-  // silently substituting it makes Claude Code's background requests fail.
-  const claudeFastModel = options.fastModel !== undefined
+  // A chosen fast model is used as-is. Otherwise Claude Code's background
+  // slot needs a Claude model, so a non-Claude default is swapped for Haiku,
+  // or for Sonnet rather than Opus: background calls should stay light.
+  const claudeFastModel = chosenFast !== undefined || isClaudeModel(fastModel)
     ? fastModel
-    : (isClaudeModel(fastModel)
-      ? fastModel
-      : newestModel(
-        catalog.models,
-        (id) => id.includes('claude') && id.includes('haiku'),
-      ) ?? claudeModel);
+    : newestClaude('haiku') ?? sonnetModel ?? claudeModel;
+
+  const modelById = (id) => catalog.models.find((model) => model.id === id);
+  const claudeEffort = effortForModel(
+    options.claudeEffort ?? preferences.claudeEffort,
+    modelById(claudeModel),
+  );
+  const codexEffort = effortForModel(
+    options.codexEffort ?? preferences.codexEffort,
+    modelById(codexModel),
+  );
 
   return {
     defaultModel,
@@ -1494,6 +1723,8 @@ export function selectClientModels(catalog, options) {
     claudeFastModel,
     sonnetModel,
     opusModel,
+    claudeEffort,
+    codexEffort,
   };
 }
 
@@ -1548,6 +1779,7 @@ function planClaude({
         sonnetModel: selections.sonnetModel,
         opusModel: selections.opusModel,
         fastModel: selections.claudeFastModel,
+        effort: selections.claudeEffort,
         setDefault: options.setDefault,
         models,
       }),
@@ -1581,6 +1813,7 @@ function planCodex({
     const merged = mergeCodexConfig(sourceText, {
       baseUrl,
       model: selections.codexModel,
+      reasoningEffort: selections.codexEffort,
       setDefault: options.setDefault,
       force: options.force,
       previousBlocks: previousEntry?.managedBlocks ?? [],
@@ -1778,9 +2011,10 @@ async function buildConfigurationPlans({
   catalog,
   config,
   options,
+  preferences = {},
 }) {
   const baseUrl = `http://127.0.0.1:${config.listen.port}`;
-  const selections = selectClientModels(catalog, options);
+  const selections = selectClientModels(catalog, options, preferences);
   const plans = [];
 
   for (const client of options.clients) {
@@ -2224,12 +2458,14 @@ export async function runConfigureClients(
     writeCache: false,
     allowFreshCacheFallback: options.modelsFile === undefined,
   });
+  const preferences = await readClientPreferences(options.root);
   const built = await buildConfigurationPlans({
     paths,
     state: ownershipInfo.state,
     catalog: loaded.catalog,
     config: loaded.config,
     options,
+    preferences,
   });
   const reports = await configurationReports(
     built.plans,
@@ -2243,8 +2479,14 @@ export async function runConfigureClients(
     models: {
       default: built.selections.defaultModel,
       claude: built.selections.claudeModel,
+      opus: built.selections.opusModel,
+      sonnet: built.selections.sonnetModel,
       codex: built.selections.codexModel,
       fast: built.selections.fastModel,
+    },
+    effort: {
+      claude: built.selections.claudeEffort ?? 'default',
+      codex: built.selections.codexEffort ?? 'default',
     },
     clients: reports,
   };
@@ -2252,9 +2494,56 @@ export async function runConfigureClients(
   if (!options.dryRun) {
     await writeModelCache(options.root, loaded.catalog);
     await applyConfigurationPlans(built.plans, ownershipInfo, backupNow);
+    await writeClientPreferences(options.root, mergeClientPreferences(preferences, options));
   }
   emitJson(stdout, output);
   return output;
+}
+
+function clientPreferencesPath(root) {
+  return path.join(root, 'state', 'client-preferences.json');
+}
+
+export async function readClientPreferences(root) {
+  let value;
+  try {
+    value = JSON.parse(await readFile(clientPreferencesPath(root), 'utf8'));
+  } catch {
+    // Absent or unreadable preferences mean "use the product defaults".
+    return {};
+  }
+  if (!isPlainObject(value)) {
+    return {};
+  }
+  const preferences = {};
+  for (const key of PREFERENCE_KEYS) {
+    if (typeof value[key] === 'string' && value[key].length > 0) {
+      preferences[key] = value[key];
+    }
+  }
+  return preferences;
+}
+
+/** Explicit choices replace saved ones; anything not given is kept. */
+export function mergeClientPreferences(previous, options) {
+  const next = { ...previous };
+  for (const key of PREFERENCE_KEYS) {
+    if (options[key] !== undefined) {
+      next[key] = options[key];
+    }
+  }
+  return next;
+}
+
+async function writeClientPreferences(root, preferences) {
+  const unchanged = await readClientPreferences(root);
+  if (canonicalJson(unchanged) === canonicalJson(preferences)) {
+    return;
+  }
+  await atomicWriteJson(clientPreferencesPath(root), {
+    schemaVersion: 1,
+    ...preferences,
+  });
 }
 
 export function isConfigureClientsMain(moduleUrl = import.meta.url, argv1 = process.argv[1]) {

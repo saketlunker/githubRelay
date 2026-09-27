@@ -1,6 +1,20 @@
-import { existsSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
+
+import { compareVersions } from "./environment.mjs";
+
+// Newer Claude models are refused server-side for older Claude Code builds.
+// Observed on claude-opus-5-5 with 2.1.278: "Claude Code 2.1.278 does not
+// support this model; version 2.1.280 or newer is required".
+export const CLAUDE_CODE_MINIMUMS = Object.freeze({
+  "claude-opus-5-5": "2.1.280",
+});
+
+// Claude Code's own installer ships builds ahead of npm, which is where the
+// version Opus 5.5 needs first appeared, and it updates itself.
+export const CLAUDE_CODE_INSTALL = "irm https://claude.ai/install.ps1 | iex";
 
 /**
  * npm 12 blocks dependency lifecycle scripts by default. Claude Code and Codex
@@ -47,6 +61,61 @@ function globalRoot() {
 }
 
 /**
+ * The first executable Windows would run for `command`. Agents are not only
+ * installed through npm: Claude Code's own installer puts a native build in
+ * %USERPROFILE%\.local\bin, which an npm-only check reported as missing.
+ */
+export function findOnPath(command, env = process.env) {
+  const directories = (env.PATH ?? env.Path ?? "").split(delimiter).filter(Boolean);
+  for (const directory of directories) {
+    for (const extension of [".exe", ".cmd", ".bat"]) {
+      const candidate = join(directory, `${command}${extension}`);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** The first configured Claude model the given Claude Code build cannot use. */
+export function claudeCodeUpgradeNeeded(version, models, minimums = CLAUDE_CODE_MINIMUMS) {
+  if (typeof version !== "string") {
+    return undefined;
+  }
+  for (const model of models) {
+    const required = minimums[model];
+    if (required !== undefined && compareVersions(version, required) < 0) {
+      return { model, required, version };
+    }
+  }
+  return undefined;
+}
+
+function claudeCodeVersion(commandPath) {
+  const probe = spawnSync(commandPath, ["--version"], {
+    encoding: "utf8",
+    timeout: 20_000,
+    windowsHide: true,
+    shell: /\.(cmd|bat)$/i.test(commandPath),
+  });
+  return /(\d+\.\d+\.\d+)/.exec(`${probe.stdout ?? ""}`)?.[1];
+}
+
+function configuredClaudeModels(home) {
+  try {
+    const settings = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8"));
+    return [
+      settings.model,
+      settings.env?.ANTHROPIC_DEFAULT_OPUS_MODEL,
+      settings.env?.ANTHROPIC_DEFAULT_SONNET_MODEL,
+    ].filter((value) => typeof value === "string");
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Pure so it can be tested without touching the real filesystem.
  *
  * Two different failures look alike from the outside and need different
@@ -57,7 +126,14 @@ function globalRoot() {
  * - the binary is present but no command was linked, which happens when npm
  *   resolves a platform-specific build that declares no `bin`.
  */
-export function classifyAgent(agent, { packageInstalled, shimPresent, binaryPresent, binaryPath, configPresent }) {
+export function classifyAgent(agent, {
+  packageInstalled,
+  shimPresent,
+  binaryPresent,
+  binaryPath,
+  configPresent,
+  upgrade,
+}) {
   if (!packageInstalled && !shimPresent) {
     return {
       status: "not installed",
@@ -92,10 +168,18 @@ export function classifyAgent(agent, { packageInstalled, shimPresent, binaryPres
     };
   }
 
+  if (upgrade !== undefined) {
+    return {
+      status: "update needed",
+      detail: `version ${upgrade.version} is too old for ${upgrade.model}, which needs ${upgrade.required} or newer; requests on it are refused`,
+      fix: CLAUDE_CODE_INSTALL,
+    };
+  }
+
   return { status: "ready" };
 }
 
-export function inspectAgents() {
+export function inspectAgents({ checkVersions = true } = {}) {
   const home = homedir();
   const root = globalRoot();
   const report = {};
@@ -103,18 +187,34 @@ export function inspectAgents() {
   for (const agent of AGENTS) {
     const packageDir = root ? join(root, "node_modules", ...agent.packageName.split("/")) : undefined;
     const packageInstalled = Boolean(packageDir && existsSync(packageDir));
-    const shimPresent = Boolean(root && existsSync(join(root, `${agent.command}.cmd`)));
+    const commandPath = findOnPath(agent.command);
+    // Installed by something other than npm, such as Claude Code's own
+    // installer. It is judged by the command that actually runs.
+    const installedElsewhere = !packageInstalled && commandPath !== undefined;
+    const shimPresent = Boolean(root && existsSync(join(root, `${agent.command}.cmd`))) || commandPath !== undefined;
 
     const binaryPath = packageDir
       ? agent.binaries.map((relative) => join(packageDir, relative)).find((candidate) => existsSync(candidate))
       : undefined;
-    const binaryPresent = agent.binaries.length === 0 || Boolean(binaryPath);
+    const binaryPresent = agent.binaries.length === 0 || Boolean(binaryPath) || installedElsewhere;
     const configPresent = agent.configs.some((relative) => existsSync(join(home, relative)));
 
+    const upgrade = checkVersions && agent.command === "claude" && commandPath !== undefined
+      ? claudeCodeUpgradeNeeded(claudeCodeVersion(commandPath), configuredClaudeModels(home))
+      : undefined;
+
     report[agent.name] = {
-      ...classifyAgent(agent, { packageInstalled, shimPresent, binaryPresent, binaryPath, configPresent }),
+      ...classifyAgent(agent, {
+        packageInstalled: packageInstalled || installedElsewhere,
+        shimPresent,
+        binaryPresent,
+        binaryPath,
+        configPresent,
+        upgrade,
+      }),
       agent,
       binaryPath,
+      commandPath,
     };
   }
 
@@ -144,7 +244,7 @@ export function linkAgent(agent, binaryPath, { root = globalRoot() } = {}) {
 /**
  * Links every agent that is installed, has a usable binary, and has no command.
  */
-export function linkUnlinkedAgents(report = inspectAgents()) {
+export function linkUnlinkedAgents(report = inspectAgents({ checkVersions: false })) {
   const linked = [];
   for (const entry of Object.values(report)) {
     if (entry.status !== "installed but not on PATH") continue;
