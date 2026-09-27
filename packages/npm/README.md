@@ -8,23 +8,39 @@ and Pi can talk to — without running VS Code.
 
 ## Install
 
-```powershell
-npm install -g githubrelay@latest
-githubrelay setup
-```
-
-`setup` walks through five steps: prerequisite checks, gateway install, GitHub
-device sign-in, client configuration, and start. Sign-in opens a browser and
-asks for a device code, so it runs as an explicit step rather than silently
-during install. npm 12 blocks dependency lifecycle scripts by default, so no
-`postinstall` is used.
-
-On a machine without Node.js, this installs Node through winget first and then
-does the same thing:
+The one line to share, which works on a freshly installed Windows, on networks
+that block the npm registry, and with no Node.js installed:
 
 ```powershell
 irm https://raw.githubusercontent.com/saketlunker/githubRelay/main/web-install.ps1 | iex
 ```
+
+With Node.js 22.13+ and a reachable npm registry, this is equivalent:
+
+```powershell
+npm install -g githubrelay@latest && githubrelay setup
+```
+
+`setup` walks through five steps: prerequisite checks, gateway install, GitHub
+device sign-in, start, and agent configuration. Sign-in opens a browser and
+asks for a device code, so it runs as an explicit step rather than silently
+during install. npm 12 blocks dependency lifecycle scripts by default, so no
+`postinstall` is used.
+
+## Models and reasoning
+
+Claude Code gets Claude Opus 5.5 (Sonnet 5 on `/model sonnet`) and Codex gets
+GPT-6 Astra, both at maximum reasoning. An account without one of these gets
+the newest model of the same family, with reasoning lowered to what that model
+supports. Change and remember a choice with, for example:
+
+```powershell
+githubrelay clients -ClaudeEffort high -CodexModel gpt-6-astra
+```
+
+Opus 5.5 needs Claude Code 2.1.280 or newer; `githubrelay doctor` says so when
+yours is older. Claude Code's own installer ships new builds first:
+`irm https://claude.ai/install.ps1 | iex`.
 
 ## Requirements
 
@@ -52,7 +68,8 @@ extension. The relay performs its own device sign-in.
 ## Day to day
 
 Nothing to do. The gateway starts when you sign in to Windows through a
-least-privilege scheduled task, and your agents are already pointed at it.
+least-privilege scheduled task, and your agents are already pointed at it. A
+watchdog brings it back within about a minute if it stops.
 
 The one recurring step: after installing a **new** coding agent, run
 `githubrelay clients` — or double-click the desktop shortcut

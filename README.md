@@ -174,18 +174,19 @@ package is `@earendil-works/pi-coding-agent`.
 
 ### First time, once
 
-Open PowerShell and run one line:
-
-```powershell
-npm install -g githubrelay@latest
-githubrelay setup
-```
-
-On a machine with no Node.js, use this instead — it installs Node through
-winget first, then does the same thing:
+Open PowerShell and paste one line. It works in the Windows PowerShell that a
+freshly installed Windows has, on corporate networks that block the npm
+registry, and on a machine with no Node.js at all:
 
 ```powershell
 irm https://raw.githubusercontent.com/saketlunker/githubRelay/main/web-install.ps1 | iex
+```
+
+If you already have Node.js 22.13 or newer and the npm registry is reachable,
+this is equivalent:
+
+```powershell
+npm install -g githubrelay@latest && githubrelay setup
 ```
 
 `setup` runs five steps and takes about a minute:
@@ -193,17 +194,58 @@ irm https://raw.githubusercontent.com/saketlunker/githubRelay/main/web-install.p
 1. Checks prerequisites.
 2. Installs the gateway.
 3. Signs you in to GitHub. A device code is copied to your clipboard and the
-   verification page opens; paste and confirm.
+   verification page opens; paste and confirm. A re-run on a working install
+   skips this.
 4. Starts the gateway.
-5. Points your coding agents at it.
+5. Points your coding agents at it, then tells you if an agent is missing or
+   too old.
 
 Then open a new terminal and run `claude` or `codex`. There is nothing to
 configure, no API key to paste, and no second account to create.
 
+For Claude Code, use its own installer rather than npm: it ships new builds
+first (Opus 5.5 needs 2.1.280 or newer, which reached it before npm), and it
+updates itself:
+
+```powershell
+irm https://claude.ai/install.ps1 | iex
+```
+
+### Models and reasoning
+
+Out of the box:
+
+| Agent | Model | Reasoning |
+| --- | --- | --- |
+| Claude Code | Claude Opus 5.5, with Sonnet 5 on `/model sonnet` | max |
+| Codex | GPT-6 Astra | max |
+
+If your account cannot see a preferred model, the newest model of the same
+family is used instead, and the reasoning level is lowered to the strongest one
+that model supports rather than being rejected.
+
+To change a choice, run `githubrelay clients` with the setting. Choices are
+remembered, so the desktop shortcut and later re-links keep them:
+
+```powershell
+githubrelay clients -ClaudeEffort high
+githubrelay clients -OpusModel claude-opus-5-5 -SonnetModel claude-sonnet-5
+githubrelay clients -CodexModel gpt-6-astra -CodexEffort max
+```
+
+Effort is `low`, `medium`, `high`, `xhigh`, `max`, or `default` to leave it to
+the agent. Claude Code receives it as `CLAUDE_CODE_EFFORT_LEVEL`, because its
+`effortLevel` setting only goes up to `xhigh` and silently ignores `max`. That
+variable takes precedence over `/effort` inside a session, so switch levels
+with `githubrelay clients -ClaudeEffort ...` instead.
+
 ### Day to day
 
 Nothing. The gateway starts when you sign in to Windows, through a
-least-privilege scheduled task, and your agents already point at it.
+least-privilege scheduled task, and your agents already point at it. If it
+stops for any reason, a watchdog on the same task brings it back within about a
+minute, and after a burst of failures (offline, asleep, between networks) it
+retries on its own rather than giving up.
 
 Useful when you want it:
 
@@ -763,11 +805,16 @@ Re-authentication may be required after GitHub revocation or expiry.
 
 ### `blocked-restart-limit`
 
-Inspect logs, fix the reported network/configuration/port problem, then:
+The backend failed repeatedly, usually because the machine was offline or
+asleep. The gateway waits five minutes and tries again on its own, so this
+normally clears by itself. To retry immediately:
 
 ```powershell
 & $gateway restart
 ```
+
+If it keeps returning, `githubrelay doctor` shows the logged cause; an expired
+GitHub sign-in is fixed with `githubrelay auth`.
 
 ### Port already in use
 
@@ -818,9 +865,21 @@ or Task Scheduler crash recovery.
 - **Windows only.** The shipped installers support Windows 10 and 11. macOS
   and Linux are rejected with a clear message rather than failing partway.
 - **Rate limited on purpose.** The gateway defaults to 20 requests per minute
-  and 2 concurrent requests. Agentic coding tools issue bursts and can hit
-  this; it is a deliberate abuse-control safeguard, not a fault. Raise it in
-  `config/gateway.json` only if you understand the risk to your account.
+  and 2 concurrent requests, as an abuse-control safeguard. A request over
+  either limit waits in a queue for up to three minutes instead of being
+  rejected, so an agent running parallel subagents sees latency rather than
+  errors; upstream still never sees more than the configured limits. Raise
+  them in `config/gateway.json` only if you understand the risk to your
+  account.
+- **The installer allows local PowerShell scripts for your account.** On a
+  fresh Windows, the Restricted execution policy refuses npm's `githubrelay`
+  and `npm` shims, so the one-liner sets `RemoteSigned` for the current user,
+  the policy PowerShell 7 already uses. A group policy that pins the execution
+  policy is left alone; `githubrelay.cmd` works regardless.
+- **Other tools may rewrite `~/.codex/config.toml`.** The Codex desktop app
+  does, and can move the relay's marker comments around its own settings. The
+  relay then keeps the app's settings, rewrites only its own table, and never
+  writes a file Codex cannot parse.
 - The backend is unofficial and can break when GitHub changes internal APIs or
   abuse controls.
 - GitHub's short-lived Copilot token is refreshed automatically, but the

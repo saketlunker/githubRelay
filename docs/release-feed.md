@@ -65,11 +65,15 @@ directly, and npm trusted publishing only supports cloud-hosted runners.
 
 To ship a release:
 
-1. Bump `version` in the repository `package.json`.
-2. Run `node scripts/build-npm-payload.mjs`, which syncs the launcher version.
-3. Update `version` and `dist.tarball` in `releases/prod/latest.json` to match
-   the tag you are about to push.
-4. Commit, then push a matching tag: `npm-v0.2.3`.
+1. Run `node scripts/set-version.mjs 0.4.1`. It sets the version in the
+   repository, desktop, and launcher `package.json` files, in the product's own
+   `package-lock.json` entries, and in `releases/prod/latest.json`, including
+   the fallback tarball URLs. Do not bump versions with a text replace: that
+   also rewrites any dependency sharing the version, which is how two lockfile
+   entries were corrupted until `npm ci` rejected the lock. A test now fails if
+   any locked version disagrees with the tarball it resolves to.
+2. Run `npm test`.
+3. Commit, then push a matching tag: `npm-v0.4.1`.
 
 The workflow refuses to publish when the tag, the launcher `package.json`, and
 `releases/prod/latest.json` disagree. A manifest ahead of the published package
