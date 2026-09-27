@@ -1,19 +1,76 @@
 name: Install smoke test
 
-# Verifies the command shared with users actually works on a clean machine.
-# It installs from the public npm registry, so it exercises the published
-# package rather than anything in this checkout.
+# Verifies the commands shared with users actually work on a clean machine.
+# Everything here installs published artifacts, not this checkout.
 
 on:
   workflow_dispatch:
+  # After every release, so a broken artifact is caught before anyone installs it.
+  workflow_run:
+    workflows: ["Publish npm launcher"]
+    types: [completed]
   schedule:
-    # Weekly, so a broken publish is noticed without anyone re-running it.
+    # Weekly, so a regression in the environment is noticed without a release.
     - cron: "17 6 * * 1"
 
 permissions:
   contents: read
 
 jobs:
+  web-install:
+    # The one-liner is what users paste into a fresh Windows, whose only
+    # PowerShell is Windows PowerShell 5.1. It failed there once while working
+    # in PowerShell 7, so it is exercised in 5.1 specifically.
+    name: One-liner in Windows PowerShell 5.1 (${{ matrix.network }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        network:
+          - registry-reachable
+          - registry-blocked
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.13.0
+
+      - name: Make the npm registry unreachable
+        if: matrix.network == 'registry-blocked'
+        shell: powershell
+        run: |
+          # Mirrors a corporate network that cannot reach registry.npmjs.org;
+          # the installer must fall back to the GitHub release.
+          npm config set registry http://127.0.0.1:9/ --location=user
+          npm config set fetch-retries 0 --location=user
+
+      - name: Run the exact one-liner
+        shell: powershell
+        env:
+          GITHUBRELAY_SKIP_SETUP: "1"
+        run: |
+          irm https://raw.githubusercontent.com/${{ github.repository }}/main/web-install.ps1 | iex
+
+      - name: The launcher is installed and runs
+        shell: powershell
+        run: |
+          $prefix = (& cmd.exe /d /s /c "npm prefix -g 2>nul" | Select-Object -First 1).Trim()
+          $launcher = Join-Path $prefix 'githubrelay.cmd'
+          if (-not (Test-Path -LiteralPath $launcher)) { throw "githubrelay.cmd was not installed under $prefix" }
+          $version = (& cmd.exe /d /s /c "`"$launcher`" version 2>&1" | Select-Object -First 1).Trim()
+          Write-Host $version
+          if ($version -notmatch '^githubrelay \d+\.\d+\.\d+$') { throw "Unexpected version output: $version" }
+
+      - name: A blocked registry installs the manifest's release
+        if: matrix.network == 'registry-blocked'
+        shell: powershell
+        run: |
+          $manifest = Invoke-RestMethod -UseBasicParsing "https://raw.githubusercontent.com/${{ github.repository }}/main/releases/prod/latest.json"
+          $prefix = (& cmd.exe /d /s /c "npm prefix -g 2>nul" | Select-Object -First 1).Trim()
+          $version = (& cmd.exe /d /s /c "`"$prefix\githubrelay.cmd`" version 2>&1" | Select-Object -First 1).Trim()
+          if ($version -ne "githubrelay $($manifest.version)") {
+            throw "Expected githubrelay $($manifest.version) from the GitHub release, got: $version"
+          }
+
   smoke:
     name: npm install -g githubrelay@latest
     runs-on: windows-latest

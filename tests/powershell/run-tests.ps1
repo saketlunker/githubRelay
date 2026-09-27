@@ -194,6 +194,25 @@ try {
         Assert-Equal 'PT1M' ([string]$definition.Settings.RestartInterval) 'Task restart interval is unexpected.'
         Assert-Equal $true $definition.Settings.Hidden 'Task definition is not hidden.'
         Assert-Equal 'PT0S' ([string]$definition.Settings.ExecutionTimeLimit) 'Task has an execution time limit.'
+        $triggers = @($definition.Trigger)
+        Assert-Equal 2 $triggers.Count 'Task needs a logon trigger and a watchdog trigger.'
+        $watchdog = @($triggers | Where-Object { $_.Repetition -and $_.Repetition.Interval })
+        Assert-Equal 1 $watchdog.Count 'Task has no repeating watchdog trigger.'
+        Assert-Equal 'PT1M' ([string]$watchdog[0].Repetition.Interval) 'Watchdog does not revive the gateway within a minute.'
+    }
+
+    Invoke-Test 'install-root ACL can be applied again to an existing install' {
+        # Set-Acl needs SeSecurityPrivilege to re-apply a protected ACL, so a
+        # second install on the same machine (a re-run of setup) used to fail.
+        $paths = Get-CHGPaths (Join-Path $testRoot 'acl-rerun-root')
+        foreach ($attempt in 1..2) {
+            & $gatewayModule {
+                param($ResolvedPaths)
+                Initialize-CHGDirectories -Paths $ResolvedPaths
+            } $paths
+        }
+        $acl = Get-Acl -LiteralPath $paths.Root
+        Assert-Equal $true $acl.AreAccessRulesProtected 'Re-applied install-root ACL is not protected.'
     }
 
     Invoke-Test 'install-root ACL is restricted to the current user and SYSTEM' {

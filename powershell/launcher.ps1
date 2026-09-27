@@ -37,7 +37,34 @@ try {
     }
 
     & $install.nodePath $supervisor --root $root
-    exit $LASTEXITCODE
+    $exitCode = $LASTEXITCODE
+
+    # The supervisor cannot log its own death when it is terminated from
+    # outside, so the launcher records the exit code. A console being closed,
+    # for example, shows up as 0xC000013A rather than as an unexplained gap.
+    try {
+        $entry = [ordered]@{
+            timestamp = [DateTime]::UtcNow.ToString('o')
+            level = $(if ($exitCode -eq 0) { 'info' } else { 'warn' })
+            component = 'launcher'
+            event = 'supervisor.exited'
+            exitCode = $exitCode
+            exitCodeHex = ('0x{0:X8}' -f $exitCode)
+        }
+        $logPath = Join-Path $root 'logs\supervisor.jsonl'
+        # Explicitly BOM-free: Windows PowerShell 5.1 writes a BOM when it
+        # creates a file, which would corrupt the first JSONL line after the
+        # supervisor rotates the log.
+        [IO.File]::AppendAllText(
+            $logPath,
+            ($entry | ConvertTo-Json -Compress) + "`n",
+            [Text.UTF8Encoding]::new($false)
+        )
+    }
+    catch {
+        # Logging must never change how the launcher exits.
+    }
+    exit $exitCode
 }
 catch {
     $message = $_.Exception.Message

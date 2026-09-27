@@ -29,6 +29,10 @@ param(
     [string]$OpusModel,
     [string]$CodexModel,
     [string]$FastModel,
+    [ValidateSet('low', 'medium', 'high', 'xhigh', 'max', 'default')]
+    [string]$ClaudeEffort,
+    [ValidateSet('low', 'medium', 'high', 'xhigh', 'max', 'default')]
+    [string]$CodexEffort,
     [string]$Alias,
     [string]$ModelsFile,
     [Alias('Home')]
@@ -122,6 +126,8 @@ switch ($Command) {
             -OpusModel $OpusModel `
             -CodexModel $CodexModel `
             -FastModel $FastModel `
+            -ClaudeEffort $ClaudeEffort `
+            -CodexEffort $CodexEffort `
             -ClientHome $ClientHome `
             -ModelsFile $ModelsFile `
             -SetDefault:$SetDefault `

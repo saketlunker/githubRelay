@@ -341,7 +341,18 @@ function Initialize-CHGDirectories {
                 )
                 $null = $acl.AddAccessRule($rule)
             }
-            Set-Acl -LiteralPath $Paths.Root -AclObject $acl
+            # Set-Acl rewrites every section of the descriptor, so re-applying
+            # it to a directory that is already protected requires
+            # SeSecurityPrivilege and fails for a normal user. That made every
+            # re-run of install (and so of setup) fail. SetAccessControl
+            # persists only the access section that was changed.
+            $directory = [IO.DirectoryInfo]::new($Paths.Root)
+            if ($PSVersionTable.PSEdition -eq 'Core') {
+                [System.IO.FileSystemAclExtensions]::SetAccessControl($directory, $acl)
+            }
+            else {
+                $directory.SetAccessControl($acl)
+            }
         }
         catch {
             throw "Unable to restrict the install directory ACL '$($Paths.Root)': $($_.Exception.Message)"
@@ -381,6 +392,8 @@ function Get-CHGDefaultConfiguration {
             requestsPerMinute = 20
             burst = 4
             requestTimeoutMs = 900000
+            maxQueuedRequests = 32
+            maxQueueWaitMs = 180000
         }
         supervision = [ordered]@{
             startupTimeoutMs = 60000
@@ -389,6 +402,7 @@ function Get-CHGDefaultConfiguration {
             maximumRestarts = 8
             restartWindowMs = 900000
             stableResetMs = 600000
+            restartCooldownMs = 300000
         }
         logging = [ordered]@{
             maximumFileBytes = 5242880
@@ -807,16 +821,17 @@ function New-CHGScheduledTaskDefinition {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 
     # Two triggers. The logon trigger starts the gateway at sign-in. The
-    # repeating trigger is a watchdog: a supervisor that died mid-session would
+    # repeating trigger is a watchdog: a supervisor that dies mid-session would
     # otherwise stay dead until the next sign-in. Repetition attached to a
     # logon trigger does not reliably schedule future runs, so the watchdog is
-    # a separate trigger. While the gateway is healthy the extra run is
-    # discarded by MultipleInstances IgnoreNew, so this costs nothing.
+    # a separate trigger. While the gateway is running the extra run is
+    # discarded by MultipleInstances IgnoreNew before anything is launched, so
+    # a short interval costs nothing and bounds an outage to about a minute.
     $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $identity.Name
     $watchdogTrigger = New-ScheduledTaskTrigger `
         -Once `
-        -At (Get-Date).AddMinutes(5) `
-        -RepetitionInterval (New-TimeSpan -Minutes 5)
+        -At (Get-Date).AddMinutes(1) `
+        -RepetitionInterval (New-TimeSpan -Minutes 1)
     $trigger = @($logonTrigger, $watchdogTrigger)
 
     $principal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited
@@ -1152,6 +1167,19 @@ function Start-CHGGateway {
         $task = Get-ScheduledTask -TaskName (Get-CHGTaskName) -ErrorAction SilentlyContinue
     }
     if ($null -ne $task) {
+        # A previous instance can still be finishing after stop returns: the
+        # supervisor releases its lock before its launcher process exits. With
+        # MultipleInstances IgnoreNew a start in that window is dropped without
+        # an error, so wait for the old instance to end. A held lock means a
+        # supervisor is already running and there is nothing to wait for.
+        $settleDeadline = [DateTime]::UtcNow.AddSeconds(15)
+        while (
+            [DateTime]::UtcNow -lt $settleDeadline -and
+            -not (Test-Path -LiteralPath $context.Paths.RuntimeLock) -and
+            (Get-ScheduledTask -TaskName (Get-CHGTaskName) -ErrorAction SilentlyContinue).State -eq 'Running'
+        ) {
+            Start-Sleep -Milliseconds 250
+        }
         Start-ScheduledTask -TaskName (Get-CHGTaskName)
     }
     else {
@@ -1716,6 +1744,11 @@ function Invoke-CHGConfigureClients {
         [string]$OpusModel,
         [string]$CodexModel,
         [string]$FastModel,
+        # No ValidateSet here: gateway.ps1 forwards every parameter, so an
+        # omitted effort arrives as an empty string, which ValidateSet rejects.
+        # Values are validated by gateway.ps1 and by configure-clients.mjs.
+        [string]$ClaudeEffort,
+        [string]$CodexEffort,
         [Alias('Home')][string]$ClientHome,
         [string]$ModelsFile,
         [switch]$SetDefault,
@@ -1747,6 +1780,8 @@ function Invoke-CHGConfigureClients {
         @{ Flag = '--opus-model'; Value = $OpusModel },
         @{ Flag = '--codex-model'; Value = $CodexModel },
         @{ Flag = '--fast-model'; Value = $FastModel },
+        @{ Flag = '--claude-effort'; Value = ([string]$ClaudeEffort).ToLowerInvariant() },
+        @{ Flag = '--codex-effort'; Value = ([string]$CodexEffort).ToLowerInvariant() },
         @{ Flag = '--home'; Value = $ClientHome },
         @{ Flag = '--models-file'; Value = $ModelsFile }
     )) {
