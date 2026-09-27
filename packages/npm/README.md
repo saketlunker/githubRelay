@@ -29,10 +29,11 @@ during install. npm 12 blocks dependency lifecycle scripts by default, so no
 
 ## Models and reasoning
 
-Claude Code gets Claude Opus 5.5 (Sonnet 5 on `/model sonnet`) and Codex gets
-GPT-6 Astra, both at maximum reasoning. An account without one of these gets
-the newest model of the same family, with reasoning lowered to what that model
-supports. Change and remember a choice with, for example:
+Claude Code gets Claude Opus 5.5 (Sonnet 5 on `/model sonnet`) at xhigh
+reasoning, and Codex gets GPT-6 Astra at max. `/effort` still works inside
+Claude Code, and a level you pick there is kept. An account without one of
+these models gets the newest model of the same family, with reasoning lowered
+to what that model supports. Change and remember a choice with, for example:
 
 ```powershell
 githubrelay clients -ClaudeEffort high -CodexModel gpt-6-astra

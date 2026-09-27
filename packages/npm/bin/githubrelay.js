@@ -36,8 +36,9 @@ Maintenance
 Choosing models and reasoning (remembered for later re-links)
   githubrelay clients -OpusModel claude-opus-5-5 -SonnetModel claude-sonnet-5
   githubrelay clients -CodexModel gpt-6-astra
-  githubrelay clients -ClaudeEffort max -CodexEffort max
+  githubrelay clients -ClaudeEffort xhigh -CodexEffort max
   Effort is one of: low, medium, high, xhigh, max, default
+  Defaults: Claude xhigh (change it in a session with /effort), Codex max
 
 Environment
   GITHUBRELAY_DISABLE_AUTO_UPDATE=1   Never check for launcher updates
@@ -220,7 +221,8 @@ async function main() {
   // Excluded are commands that report state or deliberately change it, which
   // must not have the gateway swapped underneath them.
   if (!["doctor", "uninstall", "update", "rollback", "stop", "shortcut", "setup"].includes(command)) {
-    ensureGatewayCurrent();
+    // `clients` re-links on its own right after, with the user's own flags.
+    ensureGatewayCurrent({ relink: !["clients", "configure-clients"].includes(command) });
   }
 
   switch (command) {

@@ -47,7 +47,12 @@ export const CODEX_DEFAULTS_BEGIN = '# >>> copilot-harness-gateway:defaults >>>'
 export const CODEX_DEFAULTS_END = '# <<< copilot-harness-gateway:defaults <<<';
 
 export const EFFORT_LEVELS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
-export const DEFAULT_EFFORT = 'max';
+// Claude runs at xhigh, the strongest level Claude Code can save in its
+// settings, so /effort still works inside a session. GPT runs at max.
+export const DEFAULT_EFFORTS = Object.freeze({ claude: 'xhigh', codex: 'max' });
+const CLAUDE_EFFORT_ENV = 'CLAUDE_CODE_EFFORT_LEVEL';
+// Claude Code's settings schema stops here and silently drops anything higher.
+const CLAUDE_SETTINGS_EFFORT_CEILING = 'xhigh';
 
 // What this relay is for: the strongest Claude model in Claude Code and the
 // strongest GPT model in Codex. Each list is tried in order and the first
@@ -519,6 +524,7 @@ function collectCreatedContainers(source, desiredValues) {
 function prepareOwnedJsonChanges({
   source,
   desiredValues,
+  releasePaths = [],
   previousEntry,
   force,
   filePath,
@@ -529,14 +535,26 @@ function prepareOwnedJsonChanges({
   const desiredKeys = new Set();
   const nextOwned = [];
   const changes = [];
+  let released = false;
 
   for (const desired of desiredValues) {
     const key = jsonPathKey(desired.path);
     desiredKeys.add(key);
     const current = getJsonPathState(source, desired.path);
     const previous = priorOwned.get(key);
+    // "prefer-user": a default the user may override. A value they set, or
+    // changed since the gateway wrote it, wins and stops being managed.
+    // "replace": the user just asked for this value, so it overwrites theirs.
     if (
-      previous
+      desired.policy === 'prefer-user'
+      && current.present
+      && (previous === undefined || !valuesEqual(current.value, previous.applied))
+    ) {
+      continue;
+    }
+    if (
+      desired.policy === undefined
+      && previous
       && (
         current.present !== true
         || !valuesEqual(current.value, previous.applied)
@@ -564,6 +582,25 @@ function prepareOwnedJsonChanges({
     }
   }
 
+  // A managed value that is no longer wanted is put back the way it was,
+  // unless the user has changed it since, in which case it is theirs.
+  for (const releasePath of releasePaths) {
+    const key = jsonPathKey(releasePath);
+    const previous = priorOwned.get(key);
+    if (previous === undefined || desiredKeys.has(key)) {
+      continue;
+    }
+    desiredKeys.add(key);
+    const current = getJsonPathState(source, releasePath);
+    if (current.present && valuesEqual(current.value, previous.applied)) {
+      changes.push({
+        path: [...releasePath],
+        value: previous.original.present ? cloneJson(previous.original.value) : undefined,
+      });
+      released = true;
+    }
+  }
+
   for (const previous of priorOwned.values()) {
     if (!desiredKeys.has(jsonPathKey(previous.path))) {
       nextOwned.push(cloneJson(previous));
@@ -582,6 +619,7 @@ function prepareOwnedJsonChanges({
     ownedPaths: nextOwned,
     createdContainers: [...containers.values()],
     changes,
+    released,
   };
 }
 
@@ -611,6 +649,14 @@ function baseOwnershipEntry({
   };
 }
 
+function applyJsonChange(root, change) {
+  if (change.value === undefined) {
+    deleteJsonPath(root, change.path);
+  } else {
+    setJsonPath(root, change.path, change.value);
+  }
+}
+
 function createOwnedJsonPlan({
   client,
   filePath,
@@ -619,6 +665,7 @@ function createOwnedJsonPlan({
   currentText,
   source,
   desiredValues,
+  releasePaths,
   previousEntry,
   force,
   jsonc,
@@ -626,10 +673,19 @@ function createOwnedJsonPlan({
   const prepared = prepareOwnedJsonChanges({
     source,
     desiredValues,
+    releasePaths,
     previousEntry,
     force,
     filePath,
   });
+  if (prepared.released) {
+    // Releasing a value can empty a container the gateway created for it.
+    const work = cloneJson(source);
+    for (const change of prepared.changes) {
+      applyJsonChange(work, change);
+    }
+    cleanupCreatedContainers(work, prepared.createdContainers, prepared.changes);
+  }
   let nextText = currentText;
   if (prepared.changes.length > 0) {
     if (jsonc) {
@@ -637,7 +693,7 @@ function createOwnedJsonPlan({
     } else {
       const nextObject = cloneJson(source);
       for (const change of prepared.changes) {
-        setJsonPath(nextObject, change.path, change.value);
+        applyJsonChange(nextObject, change);
       }
       nextText = stringifyJsonLike(nextObject, currentText, !exists);
     }
@@ -667,6 +723,32 @@ function createOwnedJsonPlan({
   };
 }
 
+function claudeEffortValues({ claudeModel, effort, modelEfforts, explicitEffort }) {
+  if (effort === undefined) {
+    return [];
+  }
+  const policy = explicitEffort ? 'replace' : 'prefer-user';
+  // Settings cannot hold max, so max goes through the environment variable,
+  // which also overrides /effort and --effort for the whole session.
+  if (effort === 'max') {
+    return [{ path: ['env', CLAUDE_EFFORT_ENV], value: effort, policy }];
+  }
+  // Everything else is saved per model, where Claude Code's own /effort saves
+  // a choice. A top-level effortLevel is not enough: Claude Code ignores it for
+  // newer models, and a request to Opus 5.5 still carried "medium".
+  const levels = modelEfforts ?? { [claudeModel]: effort };
+  return Object.entries(levels).map(([model, level]) => ({
+    path: ['modelSettings', model, 'effortLevel'],
+    value: level,
+    policy,
+  }));
+}
+
+export function isClaudeEffortPath(jsonPath) {
+  return (jsonPath.length === 2 && jsonPath[0] === 'env' && jsonPath[1] === CLAUDE_EFFORT_ENV)
+    || (jsonPath.length === 3 && jsonPath[0] === 'modelSettings' && jsonPath[2] === 'effortLevel');
+}
+
 function claudeDesiredValues({
   baseUrl,
   claudeModel,
@@ -674,6 +756,8 @@ function claudeDesiredValues({
   opusModel = claudeModel,
   fastModel,
   effort,
+  modelEfforts,
+  explicitEffort = false,
   setDefault = false,
   platform = process.platform,
 }) {
@@ -684,14 +768,8 @@ function claudeDesiredValues({
     { path: ['env', 'ANTHROPIC_DEFAULT_SONNET_MODEL'], value: sonnetModel },
     { path: ['env', 'ANTHROPIC_DEFAULT_OPUS_MODEL'], value: opusModel },
     { path: ['env', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'], value: fastModel },
+    ...claudeEffortValues({ claudeModel, effort, modelEfforts, explicitEffort }),
   ];
-  // The environment variable, not settings.json's effortLevel: that setting
-  // only accepts low through xhigh and silently drops "max", which left
-  // sessions at the default effort. Measured through the relay on Opus 5.5:
-  // effortLevel "max" produced 126 output tokens, this variable 2980.
-  if (effort !== undefined) {
-    desired.push({ path: ['env', 'CLAUDE_CODE_EFFORT_LEVEL'], value: effort });
-  }
   if (setDefault) {
     desired.push({ path: ['model'], value: claudeModel });
   }
@@ -713,6 +791,10 @@ export function mergeClaudeSettings(settings, options) {
     throw new Error('Claude Code already has a different apiKeyHelper; use --force to replace it.');
   }
   for (const desired of claudeDesiredValues(options)) {
+    const current = getJsonPathState(next, desired.path);
+    if (desired.policy === 'prefer-user' && current.present) {
+      continue;
+    }
     setJsonPath(next, desired.path, desired.value);
   }
   return next;
@@ -1611,20 +1693,23 @@ function newestModel(models, predicate) {
  * gets none, and one with no capability data is trusted with the request.
  */
 export function effortForModel(requested, model) {
-  const level = requested ?? DEFAULT_EFFORT;
-  if (level === 'default') {
+  if (requested === undefined || requested === 'default') {
     return undefined;
   }
   const supported = model?.capabilities?.supports?.reasoning_effort;
   if (!Array.isArray(supported)) {
-    return level;
+    return requested;
   }
-  for (let index = EFFORT_LEVELS.indexOf(level); index >= 0; index -= 1) {
+  for (let index = EFFORT_LEVELS.indexOf(requested); index >= 0; index -= 1) {
     if (supported.includes(EFFORT_LEVELS[index])) {
       return EFFORT_LEVELS[index];
     }
   }
   return undefined;
+}
+
+function cappedEffort(requested, ceiling) {
+  return EFFORT_LEVELS.indexOf(requested) > EFFORT_LEVELS.indexOf(ceiling) ? ceiling : requested;
 }
 
 export function selectClientModels(catalog, options, preferences = {}) {
@@ -1706,14 +1791,25 @@ export function selectClientModels(catalog, options, preferences = {}) {
     : newestClaude('haiku') ?? sonnetModel ?? claudeModel;
 
   const modelById = (id) => catalog.models.find((model) => model.id === id);
-  const claudeEffort = effortForModel(
-    options.claudeEffort ?? preferences.claudeEffort,
-    modelById(claudeModel),
-  );
-  const codexEffort = effortForModel(
-    options.codexEffort ?? preferences.codexEffort,
-    modelById(codexModel),
-  );
+  const claudeRequest = options.claudeEffort ?? preferences.claudeEffort ?? DEFAULT_EFFORTS.claude;
+  const codexRequest = options.codexEffort ?? preferences.codexEffort ?? DEFAULT_EFFORTS.codex;
+  const claudeEffort = effortForModel(claudeRequest, modelById(claudeModel));
+  // Claude Code keeps effort per model, so every model it can switch to gets
+  // its own level. These are only written below max, which settings cannot hold.
+  const claudeModelEfforts = {};
+  for (const id of new Set([claudeModel, opusModel, sonnetModel])) {
+    if (typeof id !== 'string' || !isClaudeModel(id)) {
+      continue;
+    }
+    const level = effortForModel(
+      cappedEffort(claudeRequest, CLAUDE_SETTINGS_EFFORT_CEILING),
+      modelById(id),
+    );
+    if (level !== undefined) {
+      claudeModelEfforts[id] = level;
+    }
+  }
+  const codexEffort = effortForModel(codexRequest, modelById(codexModel));
 
   return {
     defaultModel,
@@ -1724,6 +1820,7 @@ export function selectClientModels(catalog, options, preferences = {}) {
     sonnetModel,
     opusModel,
     claudeEffort,
+    claudeModelEfforts,
     codexEffort,
   };
 }
@@ -1766,6 +1863,26 @@ function planClaude({
       );
     }
 
+    const desiredValues = claudeDesiredValues({
+      baseUrl,
+      claudeModel: selections.claudeModel,
+      sonnetModel: selections.sonnetModel,
+      opusModel: selections.opusModel,
+      fastModel: selections.claudeFastModel,
+      effort: selections.claudeEffort,
+      modelEfforts: selections.claudeModelEfforts,
+      explicitEffort: options.claudeEffort !== undefined,
+      setDefault: options.setDefault,
+      models,
+    });
+    // Effort the gateway set before but no longer wants, such as the
+    // environment variable after moving from max to xhigh, or a model that
+    // has left a slot, is released rather than left behind to override.
+    const desiredKeys = new Set(desiredValues.map((desired) => jsonPathKey(desired.path)));
+    const releasePaths = (previousEntry?.ownedPaths ?? [])
+      .map((owned) => owned.path)
+      .filter((ownedPath) => isClaudeEffortPath(ownedPath) && !desiredKeys.has(jsonPathKey(ownedPath)));
+
     return createOwnedJsonPlan({
       client: 'claude',
       filePath: paths.claude.settings,
@@ -1773,16 +1890,8 @@ function planClaude({
       exists: current.exists,
       currentText: sourceText,
       source,
-      desiredValues: claudeDesiredValues({
-        baseUrl,
-        claudeModel: selections.claudeModel,
-        sonnetModel: selections.sonnetModel,
-        opusModel: selections.opusModel,
-        fastModel: selections.claudeFastModel,
-        effort: selections.claudeEffort,
-        setDefault: options.setDefault,
-        models,
-      }),
+      desiredValues,
+      releasePaths,
       previousEntry,
       force: options.force,
       jsonc: false,

@@ -46,15 +46,34 @@ const FULL = catalog([
   model('gpt-6-sol', ALL_EFFORTS),
 ]);
 
-test('defaults are Opus 5.5 for Claude Code and GPT-6 Astra for Codex, both at max', () => {
+test('defaults are Opus 5.5 at xhigh for Claude Code and GPT-6 Astra at max for Codex', () => {
   const selected = selectClientModels(FULL, {});
 
   assert.equal(selected.claudeModel, 'claude-opus-5-5');
   assert.equal(selected.opusModel, 'claude-opus-5-5');
   assert.equal(selected.sonnetModel, 'claude-sonnet-5');
   assert.equal(selected.codexModel, 'gpt-6-astra', 'astra is preferred over the newer-sorting sol');
-  assert.equal(selected.claudeEffort, 'max');
+  assert.equal(selected.claudeEffort, 'xhigh');
+  assert.deepEqual(selected.claudeModelEfforts, {
+    'claude-opus-5-5': 'xhigh',
+    'claude-sonnet-5': 'xhigh',
+  });
   assert.equal(selected.codexEffort, 'max');
+});
+
+test('each Claude model gets its own level, capped where settings cannot hold it', () => {
+  const selected = selectClientModels(catalog([
+    model('claude-haiku-4-5', []),
+    model('claude-sonnet-5', ['low', 'medium', 'high']),
+    model('claude-opus-5-5', ALL_EFFORTS),
+    model('gpt-6-astra', ALL_EFFORTS),
+  ]), { claudeEffort: 'max' });
+
+  assert.equal(selected.claudeEffort, 'max', 'max is kept for the environment variable');
+  assert.deepEqual(selected.claudeModelEfforts, {
+    'claude-opus-5-5': 'xhigh',
+    'claude-sonnet-5': 'high',
+  });
 });
 
 test('an account without the preferred models falls back instead of failing', () => {
@@ -81,6 +100,7 @@ test('effort is clamped to the strongest level a model advertises', () => {
   assert.equal(effortForModel('max', model('m', [])), undefined, 'no effort for a model without reasoning');
   assert.equal(effortForModel('max', model('m')), 'max', 'missing capability data is trusted');
   assert.equal(effortForModel('default', model('m', ALL_EFFORTS)), undefined);
+  assert.equal(effortForModel(undefined, model('m', ALL_EFFORTS)), undefined);
 });
 
 test('saved choices apply on the next run and a missing saved model falls back', () => {
@@ -120,18 +140,35 @@ test('effort flags are validated', () => {
   );
 });
 
-test('Claude Code gets its effort through the environment variable', () => {
-  const merged = mergeClaudeSettings({}, {
+test('Claude Code gets xhigh per model and max through the environment variable', () => {
+  const xhigh = mergeClaudeSettings({}, {
+    baseUrl: BASE,
+    claudeModel: 'claude-opus-5-5',
+    fastModel: 'claude-sonnet-5',
+    effort: 'xhigh',
+    modelEfforts: { 'claude-opus-5-5': 'xhigh', 'claude-sonnet-5': 'xhigh' },
+  });
+  // Where Claude Code's own /effort saves a choice; a top-level effortLevel
+  // is ignored for Opus 5.5.
+  assert.deepEqual(xhigh.modelSettings, {
+    'claude-opus-5-5': { effortLevel: 'xhigh' },
+    'claude-sonnet-5': { effortLevel: 'xhigh' },
+  });
+  assert.equal(xhigh.effortLevel, undefined);
+  assert.equal(xhigh.env.CLAUDE_CODE_EFFORT_LEVEL, undefined, 'the variable would lock out /effort');
+
+  const max = mergeClaudeSettings({}, {
     baseUrl: BASE,
     claudeModel: 'claude-opus-5-5',
     fastModel: 'claude-sonnet-5',
     effort: 'max',
   });
-  assert.equal(merged.env.CLAUDE_CODE_EFFORT_LEVEL, 'max');
-  assert.equal(merged.effortLevel, undefined, 'settings.json effortLevel silently drops max');
+  assert.equal(max.env.CLAUDE_CODE_EFFORT_LEVEL, 'max');
+  assert.equal(max.modelSettings, undefined, 'settings.json silently drops max');
 
   const unpinned = mergeClaudeSettings({}, { baseUrl: BASE, claudeModel: 'claude-opus-5-5', fastModel: 'claude-sonnet-5' });
   assert.equal(unpinned.env.CLAUDE_CODE_EFFORT_LEVEL, undefined);
+  assert.equal(unpinned.modelSettings, undefined);
 });
 
 test('a fresh Codex config gets the model and its effort', () => {

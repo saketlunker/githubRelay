@@ -229,6 +229,123 @@ test('Claude family mapping never assigns a non-Claude fast model', async (t) =>
   );
 });
 
+test('Claude Code effort defaults to xhigh per model and a level chosen with /effort survives re-linking', async (t) => {
+  const install = await makeInstall(t);
+  const settingsPath = path.join(install.home, '.claude', 'settings.json');
+  await mkdir(path.dirname(settingsPath), { recursive: true });
+  const originalText = `${JSON.stringify({ env: { KEEP_ME: 'yes' } }, null, 2)}\n`;
+  await writeFile(settingsPath, originalText);
+  const readSettings = async () => JSON.parse(await readFile(settingsPath, 'utf8'));
+  const relink = (extra = []) => runOffline(configureOptions(install, ['--clients', 'claude', ...extra]));
+  const remove = () => runOffline(removeOptions(install, ['--clients', 'claude']));
+
+  const first = await relink();
+  let settings = await readSettings();
+  assert.deepEqual(settings.modelSettings, {
+    'claude-opus-5': { effortLevel: 'xhigh' },
+    'claude-sonnet-4-20260101': { effortLevel: 'xhigh' },
+  });
+  assert.equal(settings.env.CLAUDE_CODE_EFFORT_LEVEL, undefined);
+  assert.equal(first.output.effort.claude, 'xhigh');
+  assert.equal(first.output.effort.codex, 'max');
+  await remove();
+  assert.equal(await readFile(settingsPath, 'utf8'), originalText, 'created containers are removed too');
+
+  await relink();
+  settings = await readSettings();
+  // What Claude Code's /effort writes. A later re-link, such as the desktop
+  // shortcut or an update, must keep it and must not refuse to run.
+  settings.modelSettings['claude-opus-5'].effortLevel = 'high';
+  await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+  await relink();
+  settings = await readSettings();
+  assert.equal(settings.modelSettings['claude-opus-5'].effortLevel, 'high');
+  assert.equal(settings.modelSettings['claude-sonnet-4-20260101'].effortLevel, 'xhigh');
+
+  const removed = await remove();
+  assert.deepEqual(
+    removed.output.clients[0].files.flatMap((file) => file.conflicts ?? []),
+    [],
+    'the user choice is not a conflict',
+  );
+  assert.deepEqual((await readSettings()).modelSettings, { 'claude-opus-5': { effortLevel: 'high' } });
+});
+
+test('an explicitly requested Claude effort replaces a level chosen with /effort', async (t) => {
+  const install = await makeInstall(t);
+  const settingsPath = path.join(install.home, '.claude', 'settings.json');
+  const readSettings = async () => JSON.parse(await readFile(settingsPath, 'utf8'));
+  const relink = (extra = []) => runOffline(configureOptions(install, ['--clients', 'claude', ...extra]));
+
+  await relink();
+  const chosen = await readSettings();
+  chosen.modelSettings['claude-opus-5'].effortLevel = 'low';
+  await writeFile(settingsPath, `${JSON.stringify(chosen, null, 2)}\n`);
+
+  await relink(['--claude-effort', 'high']);
+  const settings = await readSettings();
+  assert.equal(settings.modelSettings['claude-opus-5'].effortLevel, 'high');
+  assert.equal(settings.modelSettings['claude-sonnet-4-20260101'].effortLevel, 'high');
+});
+
+test('moving between max and a lower Claude effort swaps the mechanism and leaves nothing behind', async (t) => {
+  const install = await makeInstall(t);
+  const settingsPath = path.join(install.home, '.claude', 'settings.json');
+  const readSettings = async () => JSON.parse(await readFile(settingsPath, 'utf8'));
+  const relink = (extra = []) => runOffline(configureOptions(install, ['--clients', 'claude', ...extra]));
+
+  await relink(['--claude-effort', 'max']);
+  let settings = await readSettings();
+  assert.equal(settings.env.CLAUDE_CODE_EFFORT_LEVEL, 'max');
+  assert.equal(settings.modelSettings, undefined, 'settings cannot hold max');
+
+  // An install from before xhigh became the default: max with no saved choice.
+  await rm(path.join(install.root, 'state', 'client-preferences.json'), { force: true });
+  await relink();
+  settings = await readSettings();
+  assert.equal(
+    settings.env.CLAUDE_CODE_EFFORT_LEVEL,
+    undefined,
+    'the old variable would otherwise override the new default',
+  );
+  assert.equal(settings.modelSettings['claude-opus-5'].effortLevel, 'xhigh');
+
+  await relink(['--claude-effort', 'max']);
+  settings = await readSettings();
+  assert.equal(settings.env.CLAUDE_CODE_EFFORT_LEVEL, 'max');
+  assert.equal(settings.modelSettings, undefined, 'the emptied container is removed too');
+
+  await relink(['--claude-effort', 'default']);
+  settings = await readSettings();
+  assert.equal(settings.env.CLAUDE_CODE_EFFORT_LEVEL, undefined);
+  assert.equal(settings.modelSettings, undefined);
+});
+
+test('a Claude effort the user edited is theirs and is not released', async (t) => {
+  const install = await makeInstall(t);
+  const settingsPath = path.join(install.home, '.claude', 'settings.json');
+  const readSettings = async () => JSON.parse(await readFile(settingsPath, 'utf8'));
+  const relink = (extra = []) => runOffline(configureOptions(install, ['--clients', 'claude', ...extra]));
+
+  await relink(['--claude-effort', 'max']);
+  const edited = await readSettings();
+  edited.env.CLAUDE_CODE_EFFORT_LEVEL = 'high';
+  await writeFile(settingsPath, `${JSON.stringify(edited, null, 2)}\n`);
+
+  await relink(['--claude-effort', 'xhigh']);
+  const settings = await readSettings();
+  assert.equal(settings.env.CLAUDE_CODE_EFFORT_LEVEL, 'high');
+  assert.equal(settings.modelSettings['claude-opus-5'].effortLevel, 'xhigh');
+
+  const removed = await runOffline(removeOptions(install, ['--clients', 'claude']));
+  assert.deepEqual(
+    removed.output.clients[0].files.flatMap((file) => file.conflicts ?? []),
+    [],
+    'no longer managed, so not a conflict',
+  );
+  assert.equal((await readSettings()).env.CLAUDE_CODE_EFFORT_LEVEL, 'high');
+});
+
 test('dry-run emits a safe plan and writes no client, cache, state, directory, or backup', async (t) => {
   const install = await makeInstall(t);
   const options = configureOptions(install, [

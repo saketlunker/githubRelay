@@ -50,7 +50,7 @@ function writeState(state) {
  * keep running the old gateway until they happened to run `githubrelay update`,
  * which means a shipped fix would not reach the people it was written for.
  */
-export function ensureGatewayCurrent({ announce = console.error } = {}) {
+export function ensureGatewayCurrent({ announce = console.error, relink = true } = {}) {
   const target = packageVersion();
   const state = readState();
 
@@ -87,5 +87,16 @@ export function ensureGatewayCurrent({ announce = console.error } = {}) {
 
   const { failedGatewayUpdate, ...rest } = state;
   writeState({ ...rest, gatewaySyncedFor: target });
+
+  // A release can also change what agents are configured with, such as a new
+  // default model or reasoning level. Re-linking the way `githubrelay clients`
+  // does applies that, keeping the user's saved and in-agent choices. It is
+  // best effort: the update itself already succeeded.
+  if (relink) {
+    const relinked = runGateway("configure-clients", ["-Clients", "all", "-SetDefault"], { capture: true });
+    if (relinked.error || relinked.status !== 0) {
+      announce("Could not re-link coding agents to the new release; run 'githubrelay clients' to see why.");
+    }
+  }
   return { changed: true, from: parseGatewayVersion(active), to: target };
 }

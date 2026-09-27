@@ -68,8 +68,9 @@ Shipping today, through the npm launcher:
   directory.
 - Automatic hidden startup at user logon through a least-privilege Scheduled
   Task, plus a repeating watchdog that revives the gateway if it stops.
-- Automatic updates: the launcher updates itself and brings the installed
-  gateway to the same version.
+- Automatic updates: whenever a `githubrelay` command runs, the launcher
+  updates itself, brings the installed gateway to the same version, and
+  re-links your coding agents.
 - Lossless, backed-up client configuration for Claude Code, Codex, OpenCode,
   and Pi, including repairing an agent whose command npm failed to link.
 - A redacted diagnostic report (`githubrelay doctor`) for support.
@@ -233,7 +234,7 @@ Out of the box:
 
 | Agent | Model | Reasoning |
 | --- | --- | --- |
-| Claude Code | Claude Opus 5.5, with Sonnet 5 on `/model sonnet` | max |
+| Claude Code | Claude Opus 5.5, with Sonnet 5 on `/model sonnet` | xhigh |
 | Codex | GPT-6 Astra | max |
 
 If your account cannot see a preferred model, the newest model of the same
@@ -250,10 +251,15 @@ githubrelay clients -CodexModel gpt-6-astra -CodexEffort max
 ```
 
 Effort is `low`, `medium`, `high`, `xhigh`, `max`, or `default` to leave it to
-the agent. Claude Code receives it as `CLAUDE_CODE_EFFORT_LEVEL`, because its
-`effortLevel` setting only goes up to `xhigh` and silently ignores `max`. That
-variable takes precedence over `/effort` inside a session, so switch levels
-with `githubrelay clients -ClaudeEffort ...` instead.
+the agent.
+
+In Claude Code, `/effort` works as usual. The relay saves Claude's level for
+each model in `settings.json` under `modelSettings`, which is where `/effort`
+saves your choice too. A level you pick there is kept by later re-links, while
+`githubrelay clients -ClaudeEffort ...` replaces it. `max` is the exception:
+Claude Code cannot save `max` in settings, so the relay sets
+`CLAUDE_CODE_EFFORT_LEVEL` instead, and that variable overrides `/effort` for
+every session.
 
 ### Day to day
 
@@ -316,9 +322,11 @@ by linking the command itself:
 
 ### Updating
 
-Updates are automatic. The launcher checks for a newer release at startup and
-installs it, then brings the gateway up to the same version. A shipped fix
-reaches you without you knowing an update existed.
+Updates are automatic. The launcher checks for a newer release whenever you
+run a `githubrelay` command, including the desktop shortcut, and installs it.
+It then brings the gateway up to the same version and re-links your coding
+agents, so a changed default reaches them too. Your saved choices, and levels
+picked with `/effort`, are kept.
 
 `githubrelay update` still exists to force it, and `githubrelay rollback`
 returns to the previous gateway release. Set
