@@ -53,10 +53,15 @@ jobs:
       - name: The launcher is installed and runs
         shell: powershell
         run: |
-          $prefix = (& cmd.exe /d /s /c "npm prefix -g 2>nul" | Select-Object -First 1).Trim()
+          # Full output is captured before taking the first line: stopping a
+          # native command's pipeline early leaves a non-zero exit code, which
+          # the runner then reports as a failed step.
+          $prefix = (@(& cmd.exe /d /s /c "npm prefix -g 2>nul")[0]).Trim()
           $launcher = Join-Path $prefix 'githubrelay.cmd'
           if (-not (Test-Path -LiteralPath $launcher)) { throw "githubrelay.cmd was not installed under $prefix" }
-          $version = (& cmd.exe /d /s /c "`"$launcher`" version 2>&1" | Select-Object -First 1).Trim()
+          $output = @(& cmd.exe /d /s /c "`"$launcher`" version 2>&1")
+          if ($LASTEXITCODE -ne 0) { throw "githubrelay version exited with $LASTEXITCODE" }
+          $version = ([string]$output[0]).Trim()
           Write-Host $version
           if ($version -notmatch '^githubrelay \d+\.\d+\.\d+$') { throw "Unexpected version output: $version" }
 
@@ -65,8 +70,10 @@ jobs:
         shell: powershell
         run: |
           $manifest = Invoke-RestMethod -UseBasicParsing "https://raw.githubusercontent.com/${{ github.repository }}/main/releases/prod/latest.json"
-          $prefix = (& cmd.exe /d /s /c "npm prefix -g 2>nul" | Select-Object -First 1).Trim()
-          $version = (& cmd.exe /d /s /c "`"$prefix\githubrelay.cmd`" version 2>&1" | Select-Object -First 1).Trim()
+          $prefix = (@(& cmd.exe /d /s /c "npm prefix -g 2>nul")[0]).Trim()
+          $output = @(& cmd.exe /d /s /c "`"$prefix\githubrelay.cmd`" version 2>&1")
+          if ($LASTEXITCODE -ne 0) { throw "githubrelay version exited with $LASTEXITCODE" }
+          $version = ([string]$output[0]).Trim()
           if ($version -ne "githubrelay $($manifest.version)") {
             throw "Expected githubrelay $($manifest.version) from the GitHub release, got: $version"
           }
