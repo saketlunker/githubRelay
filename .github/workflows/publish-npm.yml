@@ -117,33 +117,10 @@ jobs:
           echo "Tarball contents verified: $tarball"
           rm -f "$tarball" tarball-entries.txt
 
-      - name: Publish
-        if: github.event_name == 'push' || inputs.dry_run == false
-        working-directory: packages/npm
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Trusted publishing needs no token, but it can only be configured on
-          # a package that already exists. Until either is set up, distribution
-          # happens through the GitHub Release attached to this tag, so skip
-          # rather than fail the run.
-          if [[ -z "${NODE_AUTH_TOKEN:-}" && "${NPM_TRUSTED_PUBLISHING:-}" != "true" ]]; then
-            echo "::notice::No npm credentials configured; skipping the registry publish."
-            echo "Set the NPM_TOKEN secret, or configure trusted publishing and set the"
-            echo "NPM_TRUSTED_PUBLISHING repository variable to true."
-            exit 0
-          fi
-
-          npm publish --provenance
-        env:
-          # Ignored once trusted publishing is configured on npmjs.com, which
-          # is the preferred path. Needed for the very first publish, because a
-          # trusted publisher can only be configured on an existing package.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_TRUSTED_PUBLISHING: ${{ vars.NPM_TRUSTED_PUBLISHING }}
-
       - name: Attach the tarball to the release
+        # Runs before the registry publish, and independently of it. The
+        # release is the only distribution path on networks that cannot reach
+        # registry.npmjs.org, so an expired npm token must not withhold it.
         if: github.event_name == 'push' && github.ref_type == 'tag'
         working-directory: packages/npm
         shell: bash
@@ -176,6 +153,38 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Publish
+        if: github.event_name == 'push' || inputs.dry_run == false
+        working-directory: packages/npm
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Trusted publishing needs no token, but it can only be configured on
+          # a package that already exists. Until either is set up, distribution
+          # happens through the GitHub Release attached above, so skip rather
+          # than fail the run.
+          if [[ -z "${NODE_AUTH_TOKEN:-}" && "${NPM_TRUSTED_PUBLISHING:-}" != "true" ]]; then
+            echo "::notice::No npm credentials configured; skipping the registry publish."
+            echo "Set the NPM_TOKEN secret, or configure trusted publishing and set the"
+            echo "NPM_TRUSTED_PUBLISHING repository variable to true."
+            exit 0
+          fi
+
+          if ! npm publish --provenance; then
+            # The release artifact is already attached, so users are not
+            # blocked. Surface this loudly rather than reporting a clean run.
+            echo "::error::npm publish failed. The GitHub release for this tag is still usable;"
+            echo "::error::the npm token is most likely expired or revoked. Replace the NPM_TOKEN secret."
+            exit 1
+          fi
+        env:
+          # Ignored once trusted publishing is configured on npmjs.com, which
+          # is the preferred path. Needed for the very first publish, because a
+          # trusted publisher can only be configured on an existing package.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TRUSTED_PUBLISHING: ${{ vars.NPM_TRUSTED_PUBLISHING }}
 
       - name: Dry run summary
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run
