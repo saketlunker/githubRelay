@@ -152,18 +152,29 @@ function downloadTo(url, destination) {
 }
 
 /**
+ * Why the registry attempt is being abandoned. A registry that answers without
+ * the version (a release can reach GitHub before npm) is not a network
+ * problem, and reporting it as one points the reader at the wrong thing.
+ */
+export function registryFailureNote(output, version) {
+  return /ETARGET|E404|No matching version|No match found for version/i.test(output ?? "")
+    ? `${PACKAGE_NAME} ${version} is not on the npm registry yet; updating from the GitHub release.`
+    : "npm registry unavailable; updating from the GitHub release.";
+}
+
+/**
  * Installs from a GitHub Release tarball for networks that cannot reach the
  * npm registry. npm refuses remote tarball specs (allow-remote defaults to
  * none), but installing from a downloaded file is still permitted.
  */
-async function reinstallFromTarball(fallback, version) {
+async function reinstallFromTarball(fallback, version, note = registryFailureNote("", version)) {
   const url = fallback?.tarball;
   if (typeof url !== "string" || !/^https:\/\//.test(url)) return false;
 
   const workspace = mkdtempSync(join(tmpdir(), "githubrelay-update-"));
   try {
     const archive = join(workspace, `${PACKAGE_NAME}-${version}.tgz`);
-    console.error("npm registry unavailable; updating from the GitHub release.");
+    console.error(note);
 
     const notify = (attempt, error) =>
       console.error(`  attempt ${attempt} failed (${error instanceof Error ? error.message : error}); retrying...`);
@@ -201,7 +212,7 @@ async function reinstall(manifest, version) {
   if (registry.ok) {
     return true;
   }
-  if (await reinstallFromTarball(manifest?.fallback, version)) {
+  if (await reinstallFromTarball(manifest?.fallback, version, registryFailureNote(registry.output, version))) {
     return true;
   }
   printTail(registry.output);

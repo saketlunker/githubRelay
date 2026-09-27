@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 
-import { compareVersions } from "./environment.mjs";
+import { compareVersions, runCommandSync } from "./environment.mjs";
 
 // Newer Claude models are refused server-side for older Claude Code builds.
 // Observed on claude-opus-5-5 with 2.1.278: "Claude Code 2.1.278 does not
@@ -15,6 +15,12 @@ export const CLAUDE_CODE_MINIMUMS = Object.freeze({
 // Claude Code's own installer ships builds ahead of npm, which is where the
 // version Opus 5.5 needs first appeared, and it updates itself.
 export const CLAUDE_CODE_INSTALL = "irm https://claude.ai/install.ps1 | iex";
+
+// winget installs OpenAI's own GitHub release build, so it is current on any
+// network that reaches GitHub. Through a Microsoft npm mirror, the `latest` tag
+// of @openai/codex resolved to 0.156.0-alpha.9-win32-x64, a platform-only
+// alpha build with no command, while the stable release was 0.157.1.
+export const CODEX_INSTALL = "winget install --id OpenAI.Codex -e";
 
 /**
  * An npm install command for a coding agent that works on any network.
@@ -105,12 +111,12 @@ export function claudeCodeUpgradeNeeded(version, models, minimums = CLAUDE_CODE_
 }
 
 function claudeCodeVersion(commandPath) {
-  const probe = spawnSync(commandPath, ["--version"], {
-    encoding: "utf8",
-    timeout: 20_000,
-    windowsHide: true,
-    shell: /\.(cmd|bat)$/i.test(commandPath),
-  });
+  const options = { encoding: "utf8", timeout: 20_000, windowsHide: true };
+  // A .cmd shim cannot be spawned directly, and `shell: true` with arguments
+  // prints Node 24's DEP0190 warning and splits a path containing spaces.
+  const probe = /\.(cmd|bat)$/i.test(commandPath)
+    ? runCommandSync(commandPath, ["--version"], options)
+    : spawnSync(commandPath, ["--version"], options);
   return /(\d+\.\d+\.\d+)/.exec(`${probe.stdout ?? ""}`)?.[1];
 }
 

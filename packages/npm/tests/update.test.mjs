@@ -1,7 +1,24 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { installSpec } from "../lib/update.mjs";
+import { installSpec, registryFailureNote } from "../lib/update.mjs";
+
+test("a registry that lacks the version is not reported as unreachable", () => {
+  // Exactly what npm printed when the release reached GitHub before npm.
+  const output = "npm error code ETARGET\nnpm error notarget No matching version found for githubrelay@0.4.3.";
+
+  assert.equal(
+    registryFailureNote(output, "0.4.3"),
+    "githubrelay 0.4.3 is not on the npm registry yet; updating from the GitHub release.",
+  );
+  assert.match(registryFailureNote("npm error 404 No match found for version 0.4.3", "0.4.3"), /not on the npm registry yet/);
+});
+
+test("a network failure still says the registry is unavailable", () => {
+  for (const output of ["npm error code ECONNREFUSED", "npm error code EPROTO", "", undefined]) {
+    assert.equal(registryFailureNote(output, "0.4.3"), "npm registry unavailable; updating from the GitHub release.");
+  }
+});
 
 test("a manifest tarball is preferred so updates work without the npm registry", () => {
   const spec = installSpec(

@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
   AGENTS,
   CLAUDE_CODE_INSTALL,
+  CODEX_INSTALL,
   agentInstallCommand,
   claudeCodeUpgradeNeeded,
   classifyAgent,
@@ -154,6 +155,11 @@ test("an agent install command works on any network", () => {
   // Claude Code installed without its binary.
   const command = agentInstallCommand("@openai/codex");
   assert.equal(command, "npm install -g @openai/codex@latest --allow-remote=all --allow-scripts=@openai/codex");
+});
+
+test("Codex is recommended from OpenAI's own release rather than an npm tag", () => {
+  // A Microsoft npm mirror tagged a platform-only alpha build as `latest`.
+  assert.equal(CODEX_INSTALL, "winget install --id OpenAI.Codex -e");
 });
 
 test("an agent installed outside npm is found on PATH", () => {

@@ -9,9 +9,10 @@
 
     It works in Windows PowerShell 5.1, which is the only PowerShell a freshly
     installed Windows has, as well as in PowerShell 7. It installs Node.js with
-    winget when it is missing or too old, installs the relay through npm, and
-    falls back to the GitHub release when the npm registry is unreachable, as
-    it is on some corporate networks.
+    winget when it is missing or too old, installs the release named in the
+    release manifest through npm, and falls back to the GitHub release when npm
+    cannot provide it: the registry is unreachable, as it is on some corporate
+    networks, or has not received that version yet.
 
     Set GITHUBRELAY_SKIP_SETUP=1 to install without running setup.
 #>
@@ -183,14 +184,20 @@ PowerShell window, and run the install command again.
         }
     }
 
-    function Install-FromRelease {
-        $manifest = Invoke-WithRetries -What 'Reading the release manifest' -Action {
+    function Get-ReleaseManifest {
+        Invoke-WithRetries -What 'Reading the release manifest' -Action {
             Invoke-RestMethod -Uri $ManifestUrl -TimeoutSec 30 -UseBasicParsing
         }
-        if (-not $manifest.PSObject.Properties['fallback'] -or -not $manifest.fallback.tarball) {
-            throw 'npm could not reach the registry and the release manifest publishes no fallback tarball.'
+    }
+
+    function Install-FromRelease {
+        param($Manifest)
+
+        if ($null -eq $Manifest) { $Manifest = Get-ReleaseManifest }
+        if (-not $Manifest.PSObject.Properties['fallback'] -or -not $Manifest.fallback.tarball) {
+            throw 'npm could not install the release and the release manifest publishes no fallback tarball.'
         }
-        $tarballUrl = [string]$manifest.fallback.tarball
+        $tarballUrl = [string]$Manifest.fallback.tarball
 
         $workspace = Join-Path ([IO.Path]::GetTempPath()) ('githubrelay-' + [Guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $workspace -Force | Out-Null
@@ -232,19 +239,40 @@ PowerShell window, and run the install command again.
     function Install-Launcher {
         param([string]$Package)
 
+        # The manifest names the release to install. The registry's `latest`
+        # can trail it, and installing that left a stale launcher to update
+        # itself on first run, printing npm errors from its older update code.
+        $manifest = $null
+        $version = 'latest'
+        try {
+            $manifest = Get-ReleaseManifest
+            if ($manifest.PSObject.Properties['version'] -and [string]$manifest.version -match '^\d+\.\d+\.\d+$') {
+                $version = [string]$manifest.version
+            }
+        }
+        catch {
+            Write-Detail "The release manifest could not be read, so $Package@latest is installed instead."
+        }
+
         # Output is held back: on a registry-blocked network this attempt
         # fails noisily, and printing that before a successful fallback makes
         # a working install look broken.
-        $attempt = Invoke-Native "npm install -g $Package@latest"
+        $attempt = Invoke-Native "npm install -g $Package@$version"
         if ($attempt.ExitCode -eq 0) {
             $attempt.Output | ForEach-Object { Write-Detail "$_" }
             Update-PathFromEnvironment
             return
         }
 
-        Write-Warn 'npm registry unavailable on this network. Using the GitHub release instead.'
+        # A registry that answers without the version is not a network problem.
+        if (($attempt.Output -join "`n") -match 'ETARGET|E404|No matching version|No match found for version') {
+            Write-Warn "$Package $version is not on the npm registry yet. Using the GitHub release instead."
+        }
+        else {
+            Write-Warn 'npm registry unavailable on this network. Using the GitHub release instead.'
+        }
         try {
-            Install-FromRelease
+            Install-FromRelease -Manifest $manifest
         }
         catch {
             Write-Host ''

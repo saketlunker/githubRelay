@@ -23,7 +23,9 @@ irm https://raw.githubusercontent.com/saketlunker/githubRelay/main/web-install.p
 ```
 
 The second line attempts to install Node.js through winget when it is missing,
-and can obtain the launcher from a GitHub release when npm is unreachable.
+and installs the launcher version named in the release manifest, taking it
+from the GitHub release when npm is unreachable or does not have that version
+yet.
 Gateway setup still needs npm dependency registry access or a complete
 existing cache; the launcher fallback is not an offline gateway installer.
 Node installation also depends on winget availability and user permissions.
@@ -209,6 +211,20 @@ updates itself:
 
 ```powershell
 irm https://claude.ai/install.ps1 | iex
+```
+
+For Codex, winget installs OpenAI's own release build, which stays current
+even where a corporate npm mirror lags behind or tags an alpha build as
+`latest`:
+
+```powershell
+winget install --id OpenAI.Codex -e
+```
+
+For Pi, use its documented npm command:
+
+```powershell
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 ```
 
 ### Models and reasoning

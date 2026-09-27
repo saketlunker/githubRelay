@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-
 import {
   MINIMUM_NODE,
   WEB_INSTALL,
@@ -7,6 +5,7 @@ import {
   isWindows,
   payloadInstalled,
   resolvePowerShell,
+  runCommandSync,
 } from "./environment.mjs";
 
 function check(name, ok, detail, fix) {
@@ -27,10 +26,9 @@ function nodeCheck() {
 }
 
 function npmCheck() {
-  const probe = spawnSync("npm", ["--version"], {
+  const probe = runCommandSync("npm", ["--version"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
-    shell: isWindows(),
   });
   if (!probe.error && probe.status === 0) {
     return check("npm", true, `v${(probe.stdout ?? "").trim()}`);

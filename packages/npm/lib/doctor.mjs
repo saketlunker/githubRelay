@@ -1,9 +1,8 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { PACKAGE_NAME, PRODUCT_NAME, isWindows, packageVersion, runGateway, runGatewayJson } from "./environment.mjs";
+import { PACKAGE_NAME, PRODUCT_NAME, packageVersion, runCommandSync, runGateway, runGatewayJson } from "./environment.mjs";
 import { formatAgents, inspectAgents } from "./agents.mjs";
 import { parseGatewayVersion } from "./gateway-sync.mjs";
 import { formatPreflight, runPreflight } from "./preflight.mjs";
@@ -47,10 +46,9 @@ function scrubValue(value) {
 }
 
 function commandVersion(command, args) {
-  const probe = spawnSync(command, args, {
+  const probe = runCommandSync(command, args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
-    shell: isWindows(),
   });
   if (probe.error || probe.status !== 0) return "not found";
   return (probe.stdout ?? "").trim().split("\n")[0];

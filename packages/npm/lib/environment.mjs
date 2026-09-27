@@ -43,6 +43,34 @@ export function isWindows() {
   return process.platform === "win32";
 }
 
+// Windows paths cannot contain a double quote, so quoting is only needed for
+// spaces and characters cmd.exe would otherwise interpret.
+function quoteForCmd(value) {
+  const text = String(value);
+  return /[\s&|<>^()]/.test(text) ? `"${text}"` : text;
+}
+
+export function cmdCommandLine(command, args = []) {
+  return [command, ...args].map(quoteForCmd).join(" ");
+}
+
+/**
+ * Runs a command the way a Windows prompt would, so `npm` and other `.cmd`
+ * shims resolve. It goes through cmd.exe explicitly rather than `shell: true`:
+ * Node 24 deprecates passing arguments with `shell: true` (DEP0190), and the
+ * warning printed in the middle of setup reads like a failure. `/s` strips
+ * only the outer quotes, so a quoted path with spaces survives intact.
+ */
+export function runCommandSync(command, args = [], options = {}) {
+  if (!isWindows()) {
+    return spawnSync(command, args, options);
+  }
+  return spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${cmdCommandLine(command, args)}"`], {
+    ...options,
+    windowsVerbatimArguments: true,
+  });
+}
+
 /**
  * Windows PowerShell 5.1 ships with Windows and is enough for the gateway module,
  * but prefer PowerShell 7 when the user already has it.
