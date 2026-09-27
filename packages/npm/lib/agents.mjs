@@ -17,6 +17,18 @@ export const CLAUDE_CODE_MINIMUMS = Object.freeze({
 export const CLAUDE_CODE_INSTALL = "irm https://claude.ai/install.ps1 | iex";
 
 /**
+ * An npm install command for a coding agent that works on any network.
+ *
+ * Both flags are needed. npm 12 blocks the postinstall step that places an
+ * agent's native binary unless it is allowed, and a corporate npm mirror
+ * serves tarballs from another host, which npm refuses by default. Without
+ * --allow-remote the command failed with EALLOWREMOTE on a Microsoft network.
+ */
+export function agentInstallCommand(packageName) {
+  return `npm install -g ${packageName}@latest --allow-remote=all --allow-scripts=${packageName}`;
+}
+
+/**
  * npm 12 blocks dependency lifecycle scripts by default. Claude Code and Codex
  * both materialise their native binary in `postinstall`, so a plain
  * `npm install -g` succeeds, prints no error, and leaves a command that cannot
@@ -147,7 +159,7 @@ export function classifyAgent(agent, {
     return {
       status: "installed but broken",
       detail: "its native binary is missing, which is what a blocked postinstall script leaves behind",
-      fix: `npm install -g ${agent.packageName} --allow-scripts=${agent.packageName}`,
+      fix: agentInstallCommand(agent.packageName),
     };
   }
 
@@ -157,7 +169,7 @@ export function classifyAgent(agent, {
       detail: binaryPath
         ? `npm linked no ${agent.command} command for this build; the binary itself is at ${binaryPath}`
         : `npm linked no ${agent.command} command for this build`,
-      fix: `run it from that path, or reinstall with: npm install -g ${agent.packageName}@latest`,
+      fix: "githubrelay clients, which links the command for you",
     };
   }
 

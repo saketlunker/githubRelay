@@ -96,11 +96,11 @@ differently:
 ```text
   Claude Code: installed but broken
       its native binary is missing, which is what a blocked postinstall script leaves behind
-      fix: npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code
+      fix: npm install -g @anthropic-ai/claude-code@latest --allow-remote=all --allow-scripts=@anthropic-ai/claude-code
 
   Codex: installed but not on PATH
       npm linked no codex command for this build; the binary itself is at ...\vendor\...\bin\codex.exe
-      fix: run it from that path, or reinstall with: npm install -g @openai/codex@latest
+      fix: githubrelay clients, which links the command for you
 ```
 
 To write the report to a file instead:

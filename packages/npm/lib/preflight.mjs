@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 
 import {
   MINIMUM_NODE,
-  PACKAGE_NAME,
+  WEB_INSTALL,
   compareVersions,
   isWindows,
   payloadInstalled,
@@ -76,7 +76,7 @@ function payloadCheck() {
     "Relay payload",
     false,
     "missing from the installed package",
-    `Reinstall with: npm install -g ${PACKAGE_NAME}@latest`,
+    `Reinstall with: ${WEB_INSTALL}`,
   );
 }
 

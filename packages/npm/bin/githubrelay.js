@@ -6,7 +6,7 @@ import { buildDoctorReport } from "../lib/doctor.mjs";
 import { createDeviceLoginWatcher } from "../lib/device-login.mjs";
 import { createDesktopShortcut } from "../lib/shortcut.mjs";
 import { ensureGatewayCurrent } from "../lib/gateway-sync.mjs";
-import { CLAUDE_CODE_INSTALL, inspectAgents, linkUnlinkedAgents } from "../lib/agents.mjs";
+import { CLAUDE_CODE_INSTALL, agentInstallCommand, inspectAgents, linkUnlinkedAgents } from "../lib/agents.mjs";
 import { failureTail, parseConfigureOutput, releaseIdFrom, summarizeConfiguration } from "../lib/setup-summary.mjs";
 import { formatPreflight, runPreflight } from "../lib/preflight.mjs";
 import { checkForUpdate } from "../lib/update.mjs";
@@ -88,7 +88,7 @@ function agentAdvice() {
     if (entry.status === "not installed") {
       const install = name === "Claude Code"
         ? CLAUDE_CODE_INSTALL
-        : "npm install -g @openai/codex@latest --allow-scripts=@openai/codex";
+        : agentInstallCommand(entry.agent.packageName);
       lines.push(`  ${name} is not installed. Install it with:`, `    ${install}`, "  then run: githubrelay clients");
       continue;
     }

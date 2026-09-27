@@ -13,6 +13,10 @@ export const MANIFEST_URL =
   process.env.GITHUBRELAY_MANIFEST_URL ??
   `https://raw.githubusercontent.com/${RELEASE_REPO}/main/releases/prod/latest.json`;
 
+// The reinstall to recommend: unlike `npm install -g githubrelay`, it also
+// works on networks that cannot reach the npm registry.
+export const WEB_INSTALL = `irm https://raw.githubusercontent.com/${RELEASE_REPO}/main/web-install.ps1 | iex`;
+
 export const MINIMUM_NODE = "22.13.0";
 
 export function packageVersion() {
@@ -87,7 +91,7 @@ export function compareVersions(left, right) {
 export function runGateway(command, args = [], { interactive = false, capture = false } = {}) {
   if (!payloadInstalled()) {
     throw new Error(
-      `The ${PRODUCT_NAME} payload is missing from the package. Reinstall with: npm install -g ${PACKAGE_NAME}@latest`,
+      `The ${PRODUCT_NAME} payload is missing from the package. Reinstall with: ${WEB_INSTALL}`,
     );
   }
   const shell = resolvePowerShell();

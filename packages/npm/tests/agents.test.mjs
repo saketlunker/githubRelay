@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
   AGENTS,
   CLAUDE_CODE_INSTALL,
+  agentInstallCommand,
   claudeCodeUpgradeNeeded,
   classifyAgent,
   findOnPath,
@@ -41,7 +42,10 @@ test("a missing native binary is reported as broken with the exact fix", () => {
 
   assert.equal(result.status, "installed but broken");
   assert.match(result.detail, /postinstall/);
-  assert.equal(result.fix, "npm install -g @anthropic-ai/claude-code --allow-scripts=@anthropic-ai/claude-code");
+  assert.equal(
+    result.fix,
+    "npm install -g @anthropic-ai/claude-code@latest --allow-remote=all --allow-scripts=@anthropic-ai/claude-code",
+  );
 });
 
 test("a present binary with no linked command is a different problem", () => {
@@ -59,6 +63,7 @@ test("a present binary with no linked command is a different problem", () => {
   assert.equal(result.status, "installed but not on PATH");
   assert.match(result.detail, /codex\.exe/, "the working binary path must be shown");
   assert.doesNotMatch(result.fix, /--allow-scripts/, "allow-scripts cannot fix a package with no scripts");
+  assert.match(result.fix, /githubrelay clients/, "re-linking creates the missing command");
 });
 
 test("an installed agent without relay config is told to run clients", () => {
@@ -141,6 +146,14 @@ test("an outdated Claude Code is reported with the installer that fixes it", () 
   assert.equal(result.status, "update needed");
   assert.match(result.detail, /2\.1\.278 is too old for claude-opus-5-5/);
   assert.equal(result.fix, CLAUDE_CODE_INSTALL);
+});
+
+test("an agent install command works on any network", () => {
+  // Observed on a Microsoft network: without --allow-remote, npm refused the
+  // corporate mirror's tarball with EALLOWREMOTE; without --allow-scripts,
+  // Claude Code installed without its binary.
+  const command = agentInstallCommand("@openai/codex");
+  assert.equal(command, "npm install -g @openai/codex@latest --allow-remote=all --allow-scripts=@openai/codex");
 });
 
 test("an agent installed outside npm is found on PATH", () => {
