@@ -25,6 +25,8 @@ export const DEFAULT_GATEWAY_CONFIGURATION = Object.freeze({
     requestsPerMinute: 20,
     burst: 4,
     requestTimeoutMs: 900_000,
+    maxQueuedRequests: 32,
+    maxQueueWaitMs: 180_000,
   },
   supervision: {
     startupTimeoutMs: 60_000,
@@ -33,6 +35,7 @@ export const DEFAULT_GATEWAY_CONFIGURATION = Object.freeze({
     maximumRestarts: 8,
     restartWindowMs: 900_000,
     stableResetMs: 600_000,
+    restartCooldownMs: 300_000,
   },
   logging: {
     maximumFileBytes: 5_242_880,

@@ -105,7 +105,7 @@ export class TokenBucket {
     this.lastRefill = now();
   }
 
-  take() {
+  refill() {
     const now = this.now();
     const elapsed = Math.max(0, now - this.lastRefill);
     this.tokens = Math.min(
@@ -113,6 +113,19 @@ export class TokenBucket {
       this.tokens + elapsed * this.refillPerMillisecond,
     );
     this.lastRefill = now;
+  }
+
+  /** Milliseconds until one token is available; 0 when one is available now. */
+  msUntilAvailable() {
+    this.refill();
+    if (this.tokens >= 1) {
+      return 0;
+    }
+    return Math.max(1, Math.ceil((1 - this.tokens) / this.refillPerMillisecond));
+  }
+
+  take() {
+    this.refill();
     if (this.tokens < 1) {
       const missing = 1 - this.tokens;
       return {
@@ -125,6 +138,159 @@ export class TokenBucket {
     }
     this.tokens -= 1;
     return { allowed: true, retryAfterSeconds: 0 };
+  }
+}
+
+/**
+ * Admits requests under a concurrency cap and a rate limit.
+ *
+ * A request that cannot start immediately waits in a bounded FIFO queue rather
+ * than being rejected. Upstream still sees exactly the configured concurrency
+ * and rate; the only difference is that a client waits instead of retrying.
+ * Long reasoning requests hold a slot for minutes, so rejecting a parallel
+ * request outright made coding agents fail their subagent calls.
+ *
+ * A rejected request never consumes a rate token. Previously the token was
+ * taken before the concurrency check, so clients retrying against a full
+ * concurrency cap drained the bucket and kept failing after a slot freed up.
+ */
+export class AdmissionController {
+  #waiting = [];
+  #active = 0;
+  #wakeTimer = null;
+
+  constructor({
+    maxConcurrent,
+    rateLimiter,
+    maxQueued = 0,
+    maxWaitMs = 0,
+    setTimer = (callback, milliseconds) => {
+      const timer = setTimeout(callback, milliseconds);
+      timer.unref?.();
+      return timer;
+    },
+    clearTimer = (timer) => clearTimeout(timer),
+  }) {
+    this.maxConcurrent = maxConcurrent;
+    this.rateLimiter = rateLimiter;
+    this.maxQueued = maxQueued;
+    this.maxWaitMs = maxWaitMs;
+    this.setTimer = setTimer;
+    this.clearTimer = clearTimer;
+  }
+
+  get activeCount() {
+    return this.#active;
+  }
+
+  get queuedCount() {
+    return this.#waiting.length;
+  }
+
+  /**
+   * Returns `{ promise, cancel }`. The promise resolves to
+   * `{ admitted: true, release }` or
+   * `{ admitted: false, reason, retryAfterSeconds }`; it never rejects.
+   */
+  acquire() {
+    // Nothing may overtake a request that is already waiting.
+    if (this.#waiting.length === 0 && this.#blockedReason() === null) {
+      return { promise: Promise.resolve(this.#grant()), cancel: () => {} };
+    }
+    if (this.maxWaitMs <= 0 || this.#waiting.length >= this.maxQueued) {
+      return {
+        promise: Promise.resolve(this.#rejection()),
+        cancel: () => {},
+      };
+    }
+
+    const entry = { resolve: null, timer: null, settled: false };
+    const promise = new Promise((resolve) => {
+      entry.resolve = resolve;
+    });
+    entry.timer = this.setTimer(() => {
+      this.#settle(entry, this.#rejection());
+      this.#pump();
+    }, this.maxWaitMs);
+    this.#waiting.push(entry);
+    this.#pump();
+    return {
+      promise,
+      cancel: () => {
+        this.#settle(entry, {
+          admitted: false,
+          reason: "cancelled",
+          retryAfterSeconds: 0,
+        });
+        this.#pump();
+      },
+    };
+  }
+
+  #blockedReason() {
+    if (this.#active >= this.maxConcurrent) {
+      return "concurrency_limited";
+    }
+    if (this.rateLimiter.msUntilAvailable() > 0) {
+      return "rate_limited";
+    }
+    return null;
+  }
+
+  #rejection() {
+    const reason = this.#blockedReason() ?? "concurrency_limited";
+    const retryAfterSeconds = reason === "rate_limited"
+      ? Math.max(1, Math.ceil(this.rateLimiter.msUntilAvailable() / 1000))
+      : 1;
+    return { admitted: false, reason, retryAfterSeconds };
+  }
+
+  #grant() {
+    this.rateLimiter.take();
+    this.#active += 1;
+    let released = false;
+    return {
+      admitted: true,
+      release: () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        this.#active = Math.max(0, this.#active - 1);
+        this.#pump();
+      },
+    };
+  }
+
+  #settle(entry, value) {
+    if (entry.settled) {
+      return;
+    }
+    entry.settled = true;
+    this.clearTimer(entry.timer);
+    const index = this.#waiting.indexOf(entry);
+    if (index >= 0) {
+      this.#waiting.splice(index, 1);
+    }
+    entry.resolve(value);
+  }
+
+  #pump() {
+    if (this.#wakeTimer !== null) {
+      this.clearTimer(this.#wakeTimer);
+      this.#wakeTimer = null;
+    }
+    while (this.#waiting.length > 0 && this.#active < this.maxConcurrent) {
+      const wait = this.rateLimiter.msUntilAvailable();
+      if (wait > 0) {
+        this.#wakeTimer = this.setTimer(() => {
+          this.#wakeTimer = null;
+          this.#pump();
+        }, wait);
+        return;
+      }
+      this.#settle(this.#waiting[0], this.#grant());
+    }
   }
 }
 

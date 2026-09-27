@@ -16,6 +16,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  AdmissionController,
   JsonlLogger,
   LOOPBACK_ADDRESS,
   TokenBucket,
@@ -38,6 +39,8 @@ const DEFAULT_CONFIGURATION = Object.freeze({
     requestsPerMinute: 20,
     burst: 4,
     requestTimeoutMs: 900_000,
+    maxQueuedRequests: 32,
+    maxQueueWaitMs: 180_000,
   },
   supervision: {
     startupTimeoutMs: 60_000,
@@ -46,6 +49,7 @@ const DEFAULT_CONFIGURATION = Object.freeze({
     maximumRestarts: 8,
     restartWindowMs: 900_000,
     stableResetMs: 600_000,
+    restartCooldownMs: 300_000,
   },
   logging: {
     maximumFileBytes: 5 * 1024 * 1024,
@@ -184,6 +188,18 @@ function mergeConfiguration(configuration) {
         5_000,
         3_600_000,
       ),
+      maxQueuedRequests: boundedInteger(
+        limits.maxQueuedRequests,
+        "limits.maxQueuedRequests",
+        0,
+        256,
+      ),
+      maxQueueWaitMs: boundedInteger(
+        limits.maxQueueWaitMs,
+        "limits.maxQueueWaitMs",
+        0,
+        3_600_000,
+      ),
     },
     supervision: {
       startupTimeoutMs: boundedInteger(
@@ -221,6 +237,12 @@ function mergeConfiguration(configuration) {
         "supervision.stableResetMs",
         60_000,
         86_400_000,
+      ),
+      restartCooldownMs: boundedInteger(
+        supervision.restartCooldownMs,
+        "supervision.restartCooldownMs",
+        1_000,
+        3_600_000,
       ),
     },
     logging: {
@@ -668,13 +690,33 @@ async function main() {
   let backendChild = null;
   let backendStartedAt = 0;
   let backendOutputBytes = 0;
-  let activeRequests = 0;
   let status = "starting";
   let lastError = null;
   let finishPromise = null;
   const restartTimestamps = [];
   const rateLimiter = new TokenBucket(configuration.limits);
+  const admission = new AdmissionController({
+    maxConcurrent: configuration.limits.maxConcurrentRequests,
+    rateLimiter,
+    maxQueued: configuration.limits.maxQueuedRequests,
+    maxWaitMs: configuration.limits.maxQueueWaitMs,
+  });
   const backendCredentialPresent = hasBackendCredential(paths.backendHome);
+
+  // Waits here can last minutes (backoff, cooldown), so shutdown must be able
+  // to cut them short instead of leaving a stop request hanging.
+  const sleepers = new Set();
+  const pause = (milliseconds) =>
+    new Promise((resolve) => {
+      const wake = () => {
+        clearTimeout(timer);
+        sleepers.delete(wake);
+        resolve();
+      };
+      const timer = setTimeout(wake, milliseconds);
+      timer.unref?.();
+      sleepers.add(wake);
+    });
 
   const persistRuntime = (extra = {}) => {
     writeAtomicJson(paths.runtime, {
@@ -685,7 +727,8 @@ async function main() {
       activeVersionId: install.activeVersionId,
       status,
       backendReady,
-      activeRequests,
+      activeRequests: admission.activeCount,
+      queuedRequests: admission.queuedCount,
       lastError,
       updatedAt: new Date().toISOString(),
       ...extra,
@@ -755,82 +798,105 @@ async function main() {
       sendJson(response, 503, { error: "backend_not_ready" });
       return;
     }
-    const rate = rateLimiter.take();
-    if (!rate.allowed) {
-      sendJson(response, 429, { error: "rate_limited" }, {
-        "retry-after": String(rate.retryAfterSeconds),
-      });
-      return;
-    }
-    if (activeRequests >= configuration.limits.maxConcurrentRequests) {
-      sendJson(response, 429, { error: "concurrency_limited" }, {
-        "retry-after": "1",
-      });
-      return;
-    }
 
-    activeRequests += 1;
-    persistRuntime();
-    let released = false;
-    const releaseRequest = (statusCode = 0) => {
-      if (released) {
+    const ticket = admission.acquire();
+    // A client that gives up while queued must not keep its place in line.
+    const abandon = () => ticket.cancel();
+    response.once("close", abandon);
+    void ticket.promise.then((decision) => {
+      response.off("close", abandon);
+      const queuedMs = Date.now() - startedAt;
+      if (!decision.admitted) {
+        if (decision.reason === "cancelled") {
+          return;
+        }
+        logger.write("warn", "request.rejected", {
+          method: request.method ?? "UNKNOWN",
+          path: pathname,
+          reason: decision.reason,
+          queuedMs,
+        });
+        if (!response.writableEnded && !response.destroyed) {
+          sendJson(response, 429, { error: decision.reason }, {
+            "retry-after": String(decision.retryAfterSeconds),
+          });
+        }
         return;
       }
-      released = true;
-      activeRequests = Math.max(0, activeRequests - 1);
-      persistRuntime();
-      logger.write("info", "request.completed", {
-        method: request.method ?? "UNKNOWN",
-        path: pathname,
-        statusCode,
-        durationMs: Date.now() - startedAt,
-      });
-    };
-
-    const upstreamRequest = http.request(
-      {
-        host: configuration.backend.address,
-        port: configuration.backend.port,
-        path: request.url,
-        method: request.method,
-        headers: sanitizeForwardHeaders(
-          request.headers,
-          secrets.internalApiKey,
-        ),
-      },
-      (upstreamResponse) => {
-        response.writeHead(
-          upstreamResponse.statusCode ?? 502,
-          sanitizeResponseHeaders(upstreamResponse.headers),
-        );
-        upstreamResponse.pipe(response);
-        upstreamResponse.once("end", () =>
-          releaseRequest(upstreamResponse.statusCode ?? 0),
-        );
-        upstreamResponse.once("error", () =>
-          releaseRequest(upstreamResponse.statusCode ?? 0),
-        );
-        response.once("close", () =>
-          releaseRequest(upstreamResponse.statusCode ?? 0),
-        );
-      },
-    );
-    upstreamRequest.setTimeout(configuration.limits.requestTimeoutMs, () => {
-      upstreamRequest.destroy(new Error("Upstream request timed out"));
-    });
-    upstreamRequest.once("error", (error) => {
-      if (!response.headersSent) {
-        sendJson(response, 502, { error: "upstream_error" });
-      } else {
-        response.destroy(error);
+      if (!backendReady || response.destroyed) {
+        decision.release();
+        if (!response.destroyed) {
+          sendJson(response, 503, { error: "backend_not_ready" });
+        }
+        return;
       }
-      releaseRequest(502);
+      forward(decision.release, queuedMs);
     });
-    request.once("aborted", () => {
-      upstreamRequest.destroy();
-      releaseRequest(499);
-    });
-    request.pipe(upstreamRequest);
+
+    function forward(release, queuedMs) {
+      persistRuntime();
+      let released = false;
+      const releaseRequest = (statusCode = 0) => {
+        if (released) {
+          return;
+        }
+        released = true;
+        release();
+        persistRuntime();
+        logger.write("info", "request.completed", {
+          method: request.method ?? "UNKNOWN",
+          path: pathname,
+          statusCode,
+          queuedMs,
+          durationMs: Date.now() - startedAt,
+        });
+      };
+
+      const upstreamRequest = http.request(
+        {
+          host: configuration.backend.address,
+          port: configuration.backend.port,
+          path: request.url,
+          method: request.method,
+          headers: sanitizeForwardHeaders(
+            request.headers,
+            secrets.internalApiKey,
+          ),
+        },
+        (upstreamResponse) => {
+          response.writeHead(
+            upstreamResponse.statusCode ?? 502,
+            sanitizeResponseHeaders(upstreamResponse.headers),
+          );
+          upstreamResponse.pipe(response);
+          upstreamResponse.once("end", () =>
+            releaseRequest(upstreamResponse.statusCode ?? 0),
+          );
+          upstreamResponse.once("error", () =>
+            releaseRequest(upstreamResponse.statusCode ?? 0),
+          );
+          response.once("close", () =>
+            releaseRequest(upstreamResponse.statusCode ?? 0),
+          );
+        },
+      );
+      upstreamRequest.setTimeout(configuration.limits.requestTimeoutMs, () => {
+        upstreamRequest.destroy(new Error("Upstream request timed out"));
+      });
+      upstreamRequest.once("error", (error) => {
+        if (!response.headersSent) {
+          sendJson(response, 502, { error: "upstream_error" });
+        } else {
+          response.destroy(error);
+        }
+        releaseRequest(502);
+      });
+      request.once("aborted", () => {
+        upstreamRequest.destroy();
+        releaseRequest(499);
+      });
+      request.pipe(upstreamRequest);
+    }
   });
 
   const finish = () => {
@@ -839,6 +905,9 @@ async function main() {
     }
     finishPromise = (async () => {
       shuttingDown = true;
+      for (const wake of [...sleepers]) {
+        wake();
+      }
       status = "stopping";
       persistRuntime();
       await terminateBackend();
@@ -851,8 +920,15 @@ async function main() {
     return finishPromise;
   };
 
-  process.once("SIGINT", () => void finish());
-  process.once("SIGTERM", () => void finish());
+  // SIGHUP is what a closed console delivers on Windows and SIGBREAK is
+  // Ctrl+Break. Handling them turns an unexplained death into a logged,
+  // orderly stop that the scheduled task's watchdog then restarts.
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"]) {
+    process.once(signal, () => {
+      logger.write("warn", "supervisor.signal", { signal });
+      void finish();
+    });
+  }
   process.once("beforeExit", () => releaseRuntimeLock(paths.lock, instanceId));
   process.once("uncaughtException", (error) => {
     logger.write("error", "supervisor.uncaught", {
@@ -889,22 +965,33 @@ async function main() {
     persistRuntime();
     logger.write("warn", "backend.blocked_auth");
   } else {
-    try {
-      await cleanupStaleBackend({
-        runtimeFile: paths.runtime,
-        entrypoint,
-        port: configuration.backend.port,
-        logger,
-      });
-    } catch (error) {
-      status = "blocked-port";
-      lastError = error.message;
-      persistRuntime();
-      logger.write("error", "backend.blocked_port", {
-        message: error.message,
-      });
+    // Retry rather than give up: the owner of the internal port is often a
+    // backend from a previous session that is still exiting. An unrelated
+    // owner is never killed; it is reported until it goes away.
+    while (!shuttingDown) {
+      try {
+        await cleanupStaleBackend({
+          runtimeFile: paths.runtime,
+          entrypoint,
+          port: configuration.backend.port,
+          logger,
+        });
+        break;
+      } catch (error) {
+        const cooldown = configuration.supervision.restartCooldownMs;
+        status = "blocked-port";
+        lastError = error.message;
+        persistRuntime({
+          restartAfter: new Date(Date.now() + cooldown).toISOString(),
+        });
+        logger.write("error", "backend.blocked_port", {
+          message: error.message,
+          retryInMs: cooldown,
+        });
+        await pause(cooldown);
+      }
     }
-    while (!shuttingDown && status !== "blocked-port") {
+    while (!shuttingDown) {
       const desired = existsSync(paths.desired)
         ? readJson(paths.desired, "desired state").state
         : "running";
@@ -926,11 +1013,24 @@ async function main() {
         restartTimestamps.length >=
         configuration.supervision.maximumRestarts
       ) {
+        // A burst of failures is usually environmental: the laptop was
+        // offline, asleep, or between networks. Giving up here once caused an
+        // eight-hour outage, because the process stayed alive with the port
+        // bound, so the scheduled task's watchdog was ignored as a duplicate.
+        // Cooling down and retrying keeps upstream load bounded and recovers
+        // on its own when the network comes back.
+        const cooldown = configuration.supervision.restartCooldownMs;
         status = "blocked-restart-limit";
-        lastError = "Backend restart limit reached";
-        persistRuntime();
-        logger.write("error", "backend.restart_limit");
-        break;
+        lastError = "Backend restart limit reached; retrying after a cooldown";
+        persistRuntime({
+          restartAfter: new Date(Date.now() + cooldown).toISOString(),
+        });
+        logger.write("error", "backend.restart_limit", {
+          cooldownMs: cooldown,
+        });
+        await pause(cooldown);
+        restartTimestamps.length = 0;
+        continue;
       }
 
       status = "starting";
@@ -1090,7 +1190,7 @@ async function main() {
         delayMs: delay,
         capturedOutputBytes: backendOutputBytes,
       });
-      await sleep(delay);
+      await pause(delay);
     }
   }
 

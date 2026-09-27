@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 
@@ -17,6 +17,11 @@ if (!Number.isInteger(port)) {
 }
 const host = process.env.HOST ?? "0.0.0.0";
 const home = process.env.COPILOT_API_HOME;
+// Lets a test simulate an environmental outage (offline, token refresh
+// failing) and then end it, without swapping binaries under the supervisor.
+if (existsSync(path.join(home, "fail-startup"))) {
+  process.exit(1);
+}
 const config = JSON.parse(
   readFileSync(path.join(home, "config.json"), "utf8"),
 );
