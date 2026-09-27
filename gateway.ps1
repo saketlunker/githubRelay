@@ -25,6 +25,8 @@ param(
     [string[]]$Clients = @('all'),
     [string]$Model,
     [string]$ClaudeModel,
+    [string]$SonnetModel,
+    [string]$OpusModel,
     [string]$CodexModel,
     [string]$FastModel,
     [string]$Alias,
@@ -116,6 +118,8 @@ switch ($Command) {
             -Clients $Clients `
             -Model $Model `
             -ClaudeModel $ClaudeModel `
+            -SonnetModel $SonnetModel `
+            -OpusModel $OpusModel `
             -CodexModel $CodexModel `
             -FastModel $FastModel `
             -ClientHome $ClientHome `

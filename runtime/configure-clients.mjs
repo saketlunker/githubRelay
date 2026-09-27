@@ -53,6 +53,8 @@ const VALUE_OPTIONS = new Map([
   ['--home', 'home'],
   ['--model', 'model'],
   ['--claude-model', 'claudeModel'],
+  ['--sonnet-model', 'sonnetModel'],
+  ['--opus-model', 'opusModel'],
   ['--codex-model', 'codexModel'],
   ['--fast-model', 'fastModel'],
   ['--models-file', 'modelsFile'],
@@ -205,6 +207,8 @@ export function parseConfigureClientsArgs(argv) {
     home: parsed.home === undefined ? undefined : path.resolve(parsed.home),
     model: parsed.model,
     claudeModel: parsed.claudeModel,
+    sonnetModel: parsed.sonnetModel,
+    opusModel: parsed.opusModel,
     codexModel: parsed.codexModel,
     fastModel: parsed.fastModel,
     setDefault: parsed.setDefault === true,
@@ -1414,6 +1418,8 @@ export function selectClientModels(catalog, options) {
   for (const [optionName, modelId] of [
     ['--model', options.model],
     ['--claude-model', options.claudeModel],
+    ['--sonnet-model', options.sonnetModel],
+    ['--opus-model', options.opusModel],
     ['--codex-model', options.codexModel],
     ['--fast-model', options.fastModel],
   ]) {
@@ -1451,24 +1457,34 @@ export function selectClientModels(catalog, options) {
   }
 
   const explicitClaudeOverride = options.claudeModel !== undefined || options.model !== undefined;
-  const sonnetModel = explicitClaudeOverride
-    ? claudeModel
-    : newestModel(
-      catalog.models,
-      (id) => id.includes('claude') && id.includes('sonnet'),
-    ) ?? claudeModel;
-  const opusModel = explicitClaudeOverride
-    ? claudeModel
-    : newestModel(
-      catalog.models,
-      (id) => id.includes('claude') && id.includes('opus'),
-    ) ?? claudeModel;
-  const claudeFastModel = isClaudeModel(fastModel)
+  // An explicit --sonnet-model / --opus-model always wins, so the two slots can
+  // differ. Without them a --claude-model applies to both, which is what a user
+  // pinning a single model expects.
+  const sonnetModel = options.sonnetModel
+    ?? (explicitClaudeOverride
+      ? claudeModel
+      : newestModel(
+        catalog.models,
+        (id) => id.includes('claude') && id.includes('sonnet'),
+      ) ?? claudeModel);
+  const opusModel = options.opusModel
+    ?? (explicitClaudeOverride
+      ? claudeModel
+      : newestModel(
+        catalog.models,
+        (id) => id.includes('claude') && id.includes('opus'),
+      ) ?? claudeModel);
+  // An explicit --fast-model is honoured even when it is not a Claude model.
+  // The catalog can advertise a Haiku the account cannot actually call, and
+  // silently substituting it makes Claude Code's background requests fail.
+  const claudeFastModel = options.fastModel !== undefined
     ? fastModel
-    : newestModel(
-      catalog.models,
-      (id) => id.includes('claude') && id.includes('haiku'),
-    ) ?? claudeModel;
+    : (isClaudeModel(fastModel)
+      ? fastModel
+      : newestModel(
+        catalog.models,
+        (id) => id.includes('claude') && id.includes('haiku'),
+      ) ?? claudeModel);
 
   return {
     defaultModel,

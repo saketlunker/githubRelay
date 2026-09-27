@@ -1712,6 +1712,8 @@ function Invoke-CHGConfigureClients {
         [string[]]$Clients = @('all'),
         [string]$Model,
         [string]$ClaudeModel,
+        [string]$SonnetModel,
+        [string]$OpusModel,
         [string]$CodexModel,
         [string]$FastModel,
         [Alias('Home')][string]$ClientHome,
@@ -1741,6 +1743,8 @@ function Invoke-CHGConfigureClients {
     foreach ($entry in @(
         @{ Flag = '--model'; Value = $Model },
         @{ Flag = '--claude-model'; Value = $ClaudeModel },
+        @{ Flag = '--sonnet-model'; Value = $SonnetModel },
+        @{ Flag = '--opus-model'; Value = $OpusModel },
         @{ Flag = '--codex-model'; Value = $CodexModel },
         @{ Flag = '--fast-model'; Value = $FastModel },
         @{ Flag = '--home'; Value = $ClientHome },
