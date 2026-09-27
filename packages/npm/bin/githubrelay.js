@@ -7,6 +7,7 @@ import { createDeviceLoginWatcher } from "../lib/device-login.mjs";
 import { createDesktopShortcut } from "../lib/shortcut.mjs";
 import { ensureGatewayCurrent } from "../lib/gateway-sync.mjs";
 import { CLAUDE_CODE_INSTALL, inspectAgents, linkUnlinkedAgents } from "../lib/agents.mjs";
+import { failureTail, parseConfigureOutput, releaseIdFrom, summarizeConfiguration } from "../lib/setup-summary.mjs";
 import { formatPreflight, runPreflight } from "../lib/preflight.mjs";
 import { checkForUpdate } from "../lib/update.mjs";
 
@@ -111,10 +112,12 @@ async function setup(args) {
   }
 
   step(2, total, "Installing the gateway");
-  const install = runGateway("install", args);
+  const install = runGateway("install", args, { capture: true });
   if (install.error || install.status !== 0) {
+    for (const line of failureTail(install)) console.error(`  ${line}`);
     fail("\nGateway install failed. Run 'githubrelay doctor' and share the output.");
   }
+  console.log(`  Installed ${releaseIdFrom(`${install.stdout ?? ""}`) ?? "the gateway"}.`);
 
   // Re-running setup on a working install must not force a new device
   // sign-in: the running relay proves the stored credential still works.
@@ -134,10 +137,13 @@ async function setup(args) {
   // discovers the model list from the loopback endpoint. On a re-run the new
   // release only takes effect after a restart; "start" would keep the old one.
   step(4, total, alreadyServing ? "Restarting the gateway" : "Starting the gateway");
-  const start = runGateway(alreadyServing ? "restart" : "start");
+  const start = runGateway(alreadyServing ? "restart" : "start", [], { capture: true });
   if (start.error || start.status !== 0) {
+    for (const line of failureTail(start)) console.error(`  ${line}`);
     fail("\nThe gateway did not start. Run 'githubrelay doctor' and share the output.");
   }
+  const endpoint = /https?:\/\/127\.0\.0\.1:\d+/.exec(`${start.stdout ?? ""}`)?.[0];
+  console.log(endpoint ? `  Running on ${endpoint}.` : "  Running.");
 
   step(5, total, "Configuring your coding agents");
   // An agent whose command npm never linked looks absent to client
@@ -148,9 +154,13 @@ async function setup(args) {
   // -SetDefault also selects the relay as the active provider. Without it
   // Codex keeps its own provider and calls api.openai.com, which fails with
   // 401 even though the relay is running and configured.
-  const clients = runGateway("configure-clients", ["-Clients", "all", "-SetDefault"]);
+  const clients = runGateway("configure-clients", ["-Clients", "all", "-SetDefault"], { capture: true });
   const clientsConfigured = !clients.error && clients.status === 0;
-  if (!clientsConfigured) {
+  if (clientsConfigured) {
+    const summary = parseConfigureOutput(`${clients.stdout ?? ""}`);
+    for (const line of summarizeConfiguration(summary)) console.log(line);
+  } else {
+    for (const line of failureTail(clients)) console.error(`  ${line}`);
     console.error("\nAgent configuration failed. Run 'githubrelay doctor' and share the output.");
   }
 

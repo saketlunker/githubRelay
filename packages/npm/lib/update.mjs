@@ -103,11 +103,24 @@ function installSpec(manifest, version) {
   return `${PACKAGE_NAME}@${version}`;
 }
 
-function npmInstallGlobal(spec) {
+function npmInstallGlobal(spec, { quiet = false } = {}) {
+  const options = quiet
+    ? { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" }
+    : { stdio: "inherit" };
   const result = isWindows()
-    ? spawnSync("cmd.exe", ["/d", "/s", "/c", "npm", "install", "-g", "--force", spec], { stdio: "inherit" })
-    : spawnSync("npm", ["install", "-g", "--force", spec], { stdio: "inherit" });
-  return !result.error && result.status === 0;
+    ? spawnSync("cmd.exe", ["/d", "/s", "/c", "npm", "install", "-g", "--force", spec], options)
+    : spawnSync("npm", ["install", "-g", "--force", spec], options);
+  return {
+    ok: !result.error && result.status === 0,
+    output: quiet ? `${result.stdout ?? ""}${result.stderr ?? ""}` : "",
+  };
+}
+
+function printTail(output, lines = 8) {
+  const tail = output.split(/\r?\n/).filter((line) => line.trim().length > 0).slice(-lines);
+  if (tail.length > 0) {
+    process.stderr.write(`${tail.join("\n")}\n`);
+  }
 }
 
 function downloadTo(url, destination) {
@@ -150,7 +163,7 @@ async function reinstallFromTarball(fallback, version) {
   const workspace = mkdtempSync(join(tmpdir(), "githubrelay-update-"));
   try {
     const archive = join(workspace, `${PACKAGE_NAME}-${version}.tgz`);
-    console.error("Registry unavailable; falling back to the GitHub release.");
+    console.error("npm registry unavailable; updating from the GitHub release.");
 
     const notify = (attempt, error) =>
       console.error(`  attempt ${attempt} failed (${error instanceof Error ? error.message : error}); retrying...`);
@@ -166,7 +179,11 @@ async function reinstallFromTarball(fallback, version) {
       }
     }
 
-    return npmInstallGlobal(archive);
+    const installed = npmInstallGlobal(archive, { quiet: true });
+    if (!installed.ok) {
+      printTail(installed.output);
+    }
+    return installed.ok;
   } catch (error) {
     console.error(`Fallback update failed: ${error instanceof Error ? error.message : error}`);
     return false;
@@ -177,8 +194,18 @@ async function reinstallFromTarball(fallback, version) {
 
 async function reinstall(manifest, version) {
   console.error(`Updating ${PRODUCT_NAME} to ${version}...`);
-  if (npmInstallGlobal(installSpec(manifest, version))) return true;
-  return reinstallFromTarball(manifest?.fallback, version);
+  // The registry attempt is quiet. On networks where it cannot succeed,
+  // printing npm's errors ahead of a working fallback made a successful
+  // update look broken; they are shown only if the fallback fails too.
+  const registry = npmInstallGlobal(installSpec(manifest, version), { quiet: true });
+  if (registry.ok) {
+    return true;
+  }
+  if (await reinstallFromTarball(manifest?.fallback, version)) {
+    return true;
+  }
+  printTail(registry.output);
+  return false;
 }
 
 export { installSpec, withRetries };
